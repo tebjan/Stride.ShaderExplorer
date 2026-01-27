@@ -50,5 +50,44 @@ namespace StrideShaderExplorer
         }
 
         private void OnCloseButtonClick(object sender, RoutedEventArgs e) => Close();
+
+        private void OnClearAllClick(object sender, RoutedEventArgs e)
+        {
+            var mvm = (MainViewModel)DataContext;
+            mvm.AdditionalPaths.Clear();
+            mvm.AdditionalPaths.Add("New path...");
+            Paths.Items.Refresh();
+        }
+
+        private void OnDetectVvvvPathsClick(object sender, RoutedEventArgs e)
+        {
+            var mvm = (MainViewModel)DataContext;
+            var detectedPaths = mvm.DetectVvvvShaderPaths();
+
+            if (detectedPaths.Count == 0)
+            {
+                MessageBox.Show("No vvvv shader directories found.\n\nExpected paths:\n" +
+                    "New: C:\\Program Files\\vvvv\\vvvv_gamma_X.X\\packs\\VL.Stride.Runtime\\stride\\Assets\\Effects\n" +
+                    "Old: C:\\Program Files\\vvvv\\vvvv_gamma_X.X\\lib\\packs\\VL.Stride.Runtime.*\\stride\\Assets\\Effects",
+                    "No Paths Found", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            int added = 0;
+            foreach (var path in detectedPaths)
+            {
+                if (!mvm.AdditionalPaths.Contains(path))
+                {
+                    int idx = mvm.AdditionalPaths.IndexOf("New path...");
+                    if (idx >= 0) mvm.AdditionalPaths.Insert(idx, path);
+                    else mvm.AdditionalPaths.Add(path);
+                    added++;
+                }
+            }
+            Paths.Items.Refresh();
+
+            MessageBox.Show(added > 0 ? $"Added {added} vvvv shader path(s)." : "All detected paths already added.",
+                added > 0 ? "Paths Detected" : "No New Paths", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
     }
 }

@@ -82,6 +82,11 @@
                         Margin="4,0,0,0"
                         Click="OnAddDirsButtonClick"
                         Content="Add Shader Dirs" />
+                    <Button
+                        Margin="4,0,0,0"
+                        Click="OnExportButtonClick"
+                        Content="Export"
+                        ToolTip="Export shader hierarchy to JSON" />
                     <TextBox
                         Margin="12,0,0,5"
                         VerticalAlignment="Bottom"

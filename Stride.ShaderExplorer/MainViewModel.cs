@@ -1,4 +1,4 @@
-﻿using Microsoft.Toolkit.Mvvm.ComponentModel;
+﻿using CommunityToolkit.Mvvm.ComponentModel;
 using Stride.Core.Shaders.Ast;
 using Stride.ShaderParser;
 using System;
@@ -6,9 +6,9 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Windows;
-using System.Xml.Serialization;
 
 namespace StrideShaderExplorer
 {
@@ -127,16 +127,39 @@ namespace StrideShaderExplorer
 
         private string ResolveNugetPackageDir()
         {
+            // check if nuget package dir is set
             var nugetPackageDir = Environment.GetEnvironmentVariable(NugetEnvironmentVariable);
             if (nugetPackageDir != null)
             {
                 return nugetPackageDir;
             }
-            else
+
+            // try to resolve nuget package dir
+            var userDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            nugetPackageDir = Path.Combine(userDir, ".nuget", "packages");
+            if (Directory.Exists(nugetPackageDir))
             {
-                var userDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-                return Path.Combine(userDir, ".nuget", "packages");
+                return nugetPackageDir;
             }
+
+            // try vvvv nuget package dir in programs\vvvv\latest\packs
+            var progs = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            var vvvvDir = Path.Combine(progs, "vvvv");
+            if (Directory.Exists(vvvvDir))
+            {
+                var latestDir = Directory.GetDirectories(vvvvDir).OrderByDescending(d => d).FirstOrDefault();
+                if (latestDir != null)
+                {
+                    nugetPackageDir = Path.Combine(latestDir, "packs");
+                    if (Directory.Exists(nugetPackageDir))
+                    {
+                        return nugetPackageDir;
+                    }
+                }
+            }
+              
+            // return folder of this program
+            return Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);        
         }
 
         internal void Refresh()
@@ -226,8 +249,109 @@ namespace StrideShaderExplorer
         public MainViewModel()
         {
             AdditionalPaths = Properties.UserSettings.Default.AdditionalPaths.Split(';').ToList();
+
+            // Auto-detect vvvv paths on first run
+            if (!Properties.UserSettings.Default.VvvvPathsDetected)
+            {
+                var vvvvPaths = DetectVvvvShaderPaths();
+                foreach (var path in vvvvPaths)
+                {
+                    if (!AdditionalPaths.Contains(path))
+                        AdditionalPaths.Add(path);
+                }
+                Properties.UserSettings.Default.VvvvPathsDetected = true;
+                Properties.UserSettings.Default.Save();
+            }
+
             AdditionalPaths.Add("New path...");
             Refresh();
+        }
+
+        public List<string> DetectVvvvShaderPaths()
+        {
+            var paths = new List<string>();
+            try
+            {
+                var vvvvDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "vvvv");
+                if (!Directory.Exists(vvvvDir)) return paths;
+
+                // Only scan vvvv_gamma_* directories, get the latest one
+                var latestVersionDir = Directory.GetDirectories(vvvvDir)
+                    .Where(d => Path.GetFileName(d).StartsWith("vvvv_gamma_", StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(d => d)
+                    .FirstOrDefault();
+
+                if (latestVersionDir == null) return paths;
+
+                // Try new structure first: vvvv_gamma_*/packs/VL.Stride.Runtime/stride/Assets/Effects
+                var packsDir = Path.Combine(latestVersionDir, "packs");
+                if (Directory.Exists(packsDir))
+                {
+                    var runtimeDir = Path.Combine(packsDir, "VL.Stride.Runtime");
+                    if (Directory.Exists(runtimeDir))
+                    {
+                        var effectsPath = Path.Combine(runtimeDir, "stride", "Assets", "Effects");
+                        if (Directory.Exists(effectsPath))
+                        {
+                            paths.Add(effectsPath);
+                            return paths;
+                        }
+                    }
+                }
+
+                // Try old structure: vvvv_gamma_*/lib/packs/VL.Stride.Runtime.*/stride/Assets/Effects
+                var libPacksDir = Path.Combine(latestVersionDir, "lib", "packs");
+                if (Directory.Exists(libPacksDir))
+                {
+                    var runtimeDir = Directory.GetDirectories(libPacksDir)
+                        .Where(d => Path.GetFileName(d).StartsWith("VL.Stride.Runtime", StringComparison.OrdinalIgnoreCase))
+                        .OrderByDescending(d => d)
+                        .FirstOrDefault();
+
+                    if (runtimeDir != null)
+                    {
+                        var effectsPath = Path.Combine(runtimeDir, "stride", "Assets", "Effects");
+                        if (Directory.Exists(effectsPath))
+                            paths.Add(effectsPath);
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException || ex is IOException)
+            {
+                Debug.WriteLine($"Error detecting vvvv paths: {ex.Message}");
+            }
+            return paths;
+        }
+
+        public void ExportShaderHierarchy(string filePath)
+        {
+            var export = new HierarchyExport
+            {
+                ExportedAt = DateTime.Now.ToString("o"),
+                ShaderCount = shaders.Count,
+                RootShaders = RootShaders.Select(ShaderToExport).ToList()
+            };
+
+            var options = new JsonSerializerOptions { WriteIndented = true };
+            var json = JsonSerializer.Serialize(export, options);
+            File.WriteAllText(filePath, json);
+        }
+
+        private ShaderExport ShaderToExport(ShaderViewModel shader)
+        {
+            return new ShaderExport
+            {
+                Name = shader.Name,
+                Path = shader.Path,
+                BaseShaders = shader.BaseShaders.Select(b => b.Name).ToList(),
+                Variables = shader.ParsedShader?.Variables?
+                    .Select(v => new MemberExport { Name = v.Name?.Text, Type = v.Type?.Name?.Text })
+                    .ToList() ?? new List<MemberExport>(),
+                Methods = shader.ParsedShader?.Methods?
+                    .Select(m => new MemberExport { Name = m.Name?.Text, Type = m.ReturnType?.Name?.Text ?? "void" })
+                    .ToList() ?? new List<MemberExport>(),
+                DerivedShaders = shader.TreeViewChildren.Select(ShaderToExport).ToList()
+            };
         }
 
         private void UpdateFiltering()
@@ -343,5 +467,28 @@ namespace StrideShaderExplorer
 
             Debug.WriteLine($"Found {shaders.Count} shaders");
         }
+    }
+
+    public class ShaderExport
+    {
+        public string Name { get; set; }
+        public string Path { get; set; }
+        public List<string> BaseShaders { get; set; }
+        public List<MemberExport> Variables { get; set; }
+        public List<MemberExport> Methods { get; set; }
+        public List<ShaderExport> DerivedShaders { get; set; }
+    }
+
+    public class MemberExport
+    {
+        public string Name { get; set; }
+        public string Type { get; set; }
+    }
+
+    public class HierarchyExport
+    {
+        public string ExportedAt { get; set; }
+        public int ShaderCount { get; set; }
+        public List<ShaderExport> RootShaders { get; set; }
     }
 }

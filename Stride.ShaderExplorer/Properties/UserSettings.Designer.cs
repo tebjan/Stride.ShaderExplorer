@@ -34,5 +34,17 @@ namespace StrideShaderExplorer.Properties {
                 this["AdditionalPaths"] = value;
             }
         }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("False")]
+        public bool VvvvPathsDetected {
+            get {
+                return ((bool)(this["VvvvPathsDetected"]));
+            }
+            set {
+                this["VvvvPathsDetected"] = value;
+            }
+        }
     }
 }

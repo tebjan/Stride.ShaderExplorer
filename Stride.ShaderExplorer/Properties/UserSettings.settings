@@ -5,5 +5,8 @@
     <Setting Name="AdditionalPaths" Type="System.String" Scope="User">
       <Value Profile="(Default)">New path...</Value>
     </Setting>
+    <Setting Name="VvvvPathsDetected" Type="System.Boolean" Scope="User">
+      <Value Profile="(Default)">False</Value>
+    </Setting>
   </Settings>
 </SettingsFile>

@@ -1,76 +1,23 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net472</TargetFramework>
-    <LangVersion>8.0</LangVersion>
-    <ApplicationIcon />
-    <StartupObject />
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <LangVersion>latest</LangVersion>
+    <OutputType>WinExe</OutputType>
     <RootNamespace>StrideShaderExplorer</RootNamespace>
     <AssemblyName>Stride.ShaderExplorer</AssemblyName>
-    <OutputType>WinExe</OutputType>
-    <UseWPF>true</UseWPF>
-    <!--<StrideIsExecutable>true</StrideIsExecutable>-->
-    <PlatformTarget>x64</PlatformTarget>
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <Version>2.0.0</Version>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
-    <PlatformTarget>AnyCPU</PlatformTarget>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
-    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Version>2.1.0</Version>
+    <ApplicationIcon>Assets\StrideShaderExplorerLogo.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
-    <None Remove="Assets\StrideShaderExplorerLogo.ico" />
-    <None Remove="Assets\XenkoShaderExplorerLogo.png" />
-  </ItemGroup>
-  <ItemGroup>
-    <PackageReference Include="CommonServiceLocator" Version="2.0.6" />
-    <PackageReference Include="Microsoft.Toolkit.Mvvm" Version="7.1.2" />
-    <PackageReference Include="Stride.Shaders.Parser" Version="4.0.1.1428" />
-    <!--<PackageReference Include="Stride.Core.Assets.CompilerApp" Version="4.0.1.1428" IncludeAssets="build;buildTransitive" />-->
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.2.2" />
+    <PackageReference Include="Stride.Shaders.Parser" Version="4.2.0.2188" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\SyntaxHighlightBox\AurelienRibon.Ui.SyntaxHighlightBox\AurelienRibon.Ui.SyntaxHighlightBox.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <Reference Include="System.Windows.Forms" />
-  </ItemGroup>
-  <ItemGroup>
-    <Resource Include="Assets\StrideShaderExplorerLogo.ico">
-      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
-    </Resource>
-    <Resource Include="Assets\XenkoShaderExplorerLogo.png" />
-  </ItemGroup>
-  <ItemGroup>
-    <Compile Update="Properties\Resources.Designer.cs">
-      <DesignTime>True</DesignTime>
-      <AutoGen>True</AutoGen>
-      <DependentUpon>Resources.resx</DependentUpon>
-    </Compile>
-    <Compile Update="Properties\UserSettings.Designer.cs">
-      <DesignTimeSharedInput>True</DesignTimeSharedInput>
-      <AutoGen>True</AutoGen>
-      <DependentUpon>UserSettings.settings</DependentUpon>
-    </Compile>
-    <Compile Update="**\*.xaml.cs" SubType="Code" DependentUpon="%(Filename)" />
-  </ItemGroup>
-  <ItemGroup>
-    <Compile Update="AdditionalPathsWindow.xaml.cs">
-      <DependentUpon>AdditionalPathsWindow.xaml</DependentUpon>
-    </Compile>
-  </ItemGroup>
-  <ItemGroup>
-    <EmbeddedResource Update="Properties\Resources.resx" Generator="ResXFileCodeGenerator" LastGenOutput="Resources.Designer.cs" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Update="Properties\UserSettings.settings">
-      <Generator>SettingsSingleFileGenerator</Generator>
-      <LastGenOutput>UserSettings.Designer.cs</LastGenOutput>
-    </None>
-  </ItemGroup>
-  <ItemGroup>
-    <Page Update="AdditionalPathsWindow.xaml">
-      <XamlRuntime>$(DefaultXamlRuntime)</XamlRuntime>
-    </Page>
+    <Resource Include="Assets\StrideShaderExplorerLogo.ico" />
   </ItemGroup>
 </Project>

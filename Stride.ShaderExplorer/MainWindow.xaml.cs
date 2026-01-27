@@ -221,6 +221,30 @@ namespace StrideShaderExplorer
             ViewModel.Refresh();
         }
 
+        private void OnExportButtonClick(object sender, RoutedEventArgs e)
+        {
+            var dialog = new Microsoft.Win32.SaveFileDialog
+            {
+                Filter = "JSON Files (*.json)|*.json",
+                DefaultExt = ".json",
+                FileName = "ShaderHierarchy"
+            };
+
+            if (dialog.ShowDialog() == true)
+            {
+                try
+                {
+                    ViewModel.ExportShaderHierarchy(dialog.FileName);
+                    MessageBox.Show($"Exported {ViewModel.shaders.Count} shaders to:\n{dialog.FileName}",
+                        "Export Complete", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Export failed: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            }
+        }
+
         protected override void OnClosed(EventArgs e)
         {
             ViewModel.SaveUserSetting();

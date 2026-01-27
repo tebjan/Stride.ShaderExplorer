@@ -1,4 +1,4 @@
-﻿using Microsoft.Toolkit.Mvvm.ComponentModel;
+﻿using CommunityToolkit.Mvvm.ComponentModel;
 using Stride.ShaderParser;
 using System.Collections.Generic;
 using System.ComponentModel;
