@@ -1,13 +1,9 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
-using Stride.Core.Shaders.Ast;
-using Stride.ShaderParser;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using System.Windows;
 
 namespace StrideShaderExplorer
@@ -18,15 +14,24 @@ namespace StrideShaderExplorer
         Dev
     }
 
+    public enum SearchMode
+    {
+        FilesAndMembers,
+        FilenameOnly,
+        MembersOnly
+    }
+
     public class MainViewModel : ObservableRecipient
     {
         private const string StrideEnvironmentVariable = "StrideDir";
         private const string NugetEnvironmentVariable = "NUGET_PACKAGES";
 
         private readonly NuGetDownloader _nugetDownloader = new();
+        private readonly ShaderRepository _shaderRepository = new();
+        private readonly ShaderTreeBuilder _shaderTreeBuilder;
 
         private string _filterText;
-        private bool _directParentsOnly = true;
+        private SearchMode _searchMode = SearchMode.FilesAndMembers;
         private ShaderViewModel _selectedShader;
         private IReadOnlyList<string> _paths;
 
@@ -36,53 +41,11 @@ namespace StrideShaderExplorer
             set;
         }
 
-        public Dictionary<string, ShaderViewModel> shaders = new Dictionary<string, ShaderViewModel>();
-        public Dictionary<string, Dictionary<ShaderViewModel, MemberList>> members = new Dictionary<string, Dictionary<ShaderViewModel, MemberList>>();
-        public Dictionary<string, ShaderViewModel> ShaderMap => shaders;
+        public IReadOnlyDictionary<string, ShaderViewModel> ShaderMap => _shaderRepository.Shaders;
 
         public bool FindMember(string name, ShaderViewModel shader, out MemberList mems, out List<ShaderViewModel> scopedShaders)
         {
-            mems = null;
-            scopedShaders = null;
-            var result = members.TryGetValue(name, out var memberCandidates);
-
-            if (result)
-            {
-                // defined locally?
-                if (memberCandidates.TryGetValue(shader, out mems)) 
-                {
-
-                }
-
-                //find base shaders that defines the member, could be multiple for method overrides
-                scopedShaders = new List<ShaderViewModel>();
-                var definingShader = shader;
-                foreach (var baseShader in shader.BaseShaders)
-                {
-
-                    if (memberCandidates.TryGetValue(baseShader, out var ms))
-                    {
-                        //find highest definition in hierarchy
-                        if (definingShader.BaseShaders.Contains(baseShader))
-                        {
-                            mems = ms;
-                        }
-
-                        scopedShaders.Add(baseShader);
-                    }
-                }
-
-                //also add derived shaders
-                foreach (var derivedShader in shader.DerivedShaders)
-                {
-                    if (memberCandidates.TryGetValue(derivedShader, out var _))
-                    {
-                        scopedShaders.Add(derivedShader);
-                    }
-                }
-            }
-
-            return result;
+            return _shaderRepository.FindMember(name, shader, out mems, out scopedShaders);
         }
 
         /// <summary>
@@ -106,13 +69,29 @@ namespace StrideShaderExplorer
             }
         }
 
-        public bool DirectParentsOnly
+        public SearchMode SearchMode
         {
-            get { return _directParentsOnly; }
+            get { return _searchMode; }
             set
             {
-                if (SetProperty(ref _directParentsOnly, value))
+                if (SetProperty(ref _searchMode, value))
+                    UpdateFiltering();
+            }
+        }
+
+        public IEnumerable<SearchMode> SearchModeOptions => Enum.GetValues<SearchMode>();
+
+        public bool DirectParentsOnly
+        {
+            get { return _shaderTreeBuilder.DirectParentsOnly; }
+            set
+            {
+                if (_shaderTreeBuilder.DirectParentsOnly != value)
+                {
+                    _shaderTreeBuilder.DirectParentsOnly = value;
+                    OnPropertyChanged();
                     Refresh();
+                }
             }
         }
 
@@ -182,7 +161,7 @@ namespace StrideShaderExplorer
                         // If no Stride packages found in nuget, try vvvv's packs folder
                         if (paths.Count == 0)
                         {
-                            var vvvvPaths = DetectVvvvStridePackages();
+                            var vvvvPaths = VvvvPathResolver.Instance.GetStridePackagePaths();
                             if (vvvvPaths.Count > 0)
                                 paths = vvvvPaths;
                         }
@@ -276,7 +255,7 @@ namespace StrideShaderExplorer
                 {
                     try
                     {
-                        RootShaders = BuildShaderTree().OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase).ToList();
+                        RootShaders = _shaderTreeBuilder.BuildTree(value);
                         OnPropertyChanged(nameof(RootShaders));
                         OnPropertyChanged(nameof(AllShaders));
                         UpdateFiltering();
@@ -294,12 +273,14 @@ namespace StrideShaderExplorer
 
         public MainViewModel()
         {
+            _shaderTreeBuilder = new ShaderTreeBuilder(_shaderRepository);
+
             AdditionalPaths = Properties.UserSettings.Default.AdditionalPaths.Split(';').ToList();
 
             // Auto-detect vvvv paths on first run
             if (!Properties.UserSettings.Default.VvvvPathsDetected)
             {
-                var vvvvPaths = DetectVvvvShaderPaths();
+                var vvvvPaths = VvvvPathResolver.Instance.GetVLStrideShaderPaths();
                 foreach (var path in vvvvPaths)
                 {
                     if (!AdditionalPaths.Contains(path))
@@ -349,22 +330,12 @@ namespace StrideShaderExplorer
             return false;
         }
 
-        private List<string> DetectVvvvStridePackages()
-        {
-            return VvvvPathResolver.Instance.GetStridePackagePaths();
-        }
-
-        public List<string> DetectVvvvShaderPaths()
-        {
-            return VvvvPathResolver.Instance.GetVLStrideShaderPaths();
-        }
-
         public void ExportShaderHierarchy(string filePath)
         {
             var export = new HierarchyExport
             {
                 ExportedAt = DateTime.Now.ToString("o"),
-                ShaderCount = shaders.Count,
+                ShaderCount = _shaderRepository.Count,
                 RootShaders = RootShaders.Select(ShaderToExport).ToList()
             };
 
@@ -394,9 +365,36 @@ namespace StrideShaderExplorer
         {
             foreach (var shader in AllShaders)
             {
-                shader.IsVisible = string.IsNullOrEmpty(_filterText) ||
-                    shader.Name.ToLower().Contains(_filterText.ToLower());
-                shader.IsExpanded = shader.DerivedShaders.Any(o => o.IsVisible);
+                if (string.IsNullOrEmpty(_filterText))
+                {
+                    shader.IsVisible = true;
+                    // Don't change IsExpanded when filter is empty
+                }
+                else
+                {
+                    var lowerFilter = _filterText.ToLower();
+                    bool matchesName = shader.Name.ToLower().Contains(lowerFilter);
+                    bool matchesMember = false;
+
+                    if (_searchMode != SearchMode.FilenameOnly && shader.ParsedShader != null)
+                    {
+                        matchesMember = shader.ParsedShader.Variables?.Any(v =>
+                            v.Name?.Text?.ToLower().Contains(lowerFilter) == true) == true ||
+                            shader.ParsedShader.Methods?.Any(m =>
+                                m.Name?.Text?.ToLower().Contains(lowerFilter) == true) == true;
+                    }
+
+                    shader.IsVisible = _searchMode switch
+                    {
+                        SearchMode.FilesAndMembers => matchesName || matchesMember,
+                        SearchMode.FilenameOnly => matchesName,
+                        SearchMode.MembersOnly => matchesMember,
+                        _ => matchesName || matchesMember
+                    };
+
+                    // Auto-expand parents of visible items only when filtering
+                    shader.IsExpanded = shader.DerivedShaders.Any(o => o.IsVisible);
+                }
             }
         }
 
@@ -421,88 +419,6 @@ namespace StrideShaderExplorer
             yield return shader;
         }
 
-        private IEnumerable<ShaderViewModel> BuildShaderTree()
-        {
-            var files = Paths.Where(p => !string.IsNullOrWhiteSpace(p) && Directory.Exists(p))
-                .SelectMany(path => Directory.GetFiles(path, "*.sdsl", SearchOption.AllDirectories));
-
-            shaders.Clear();
-            var duplicates = new Dictionary<string, ShaderViewModel>();
-
-            foreach (var file in files)
-            {
-                var name = Path.GetFileNameWithoutExtension(file);
-                if(!shaders.ContainsKey(name))
-                    shaders[name] = new ShaderViewModel { Path = file, Name = name };
-                else
-                    duplicates[name] = new ShaderViewModel { Path = file, Name = name };
-            }
-
-            foreach (var shader in shaders.Values)
-            {
-                if (EffectUtils.TryParseEffect(shader.Name, shaders, out var parsedShader))
-                {
-                    var baseShaderNames = parsedShader.BaseShaders.Select(s => s.ShaderClass.Name.Text).ToList();
-                    shader.ParsedShader = parsedShader;
-
-                    // get all declrarations in this shader
-                    foreach (var m in parsedShader.ShaderClass.Members.OfType<IDeclaration>() ?? Enumerable.Empty<IDeclaration>())
-                    {
-                        var mn = m.Name.Text;
-                        if (string.IsNullOrWhiteSpace(mn))
-                        {
-                            continue;
-                        }
-
-                        if (!members.TryGetValue(mn, out var memberCandidates))
-                        {
-                            memberCandidates = new Dictionary<ShaderViewModel, MemberList>();
-                        }
-
-                        if (!memberCandidates.TryGetValue(shader, out var mems))
-                        {
-                            mems = new MemberList();
-                        }
-
-                        mems.Add(new MemberViewModel(mn, m));
-
-                        memberCandidates[shader] = mems;
-                        members[mn] = memberCandidates;
-                    }
-
-                    if (baseShaderNames.Count > 0)
-                    { 
-                        var baseShaders = baseShaderNames
-                            .Select(s => shaders.TryGetValue(s, out var b) ? b : null)
-                            .Where(s => s != null);
-
-                        foreach (var baseShader in baseShaders)
-                        {
-                            shader.BaseShaders.Add(baseShader);
-                            baseShader.DerivedShaders.Add(shader);
-                            if (_directParentsOnly)
-                            {
-                                if (parsedShader.ShaderClass.BaseClasses.FirstOrDefault(bc => bc.Name.Text == baseShader.Name) != null)
-                                {
-                                    baseShader.TreeViewChildren.Add(shader);
-                                }
-                            }
-                            else
-                            {
-                                baseShader.TreeViewChildren.Add(shader);
-                            }
-                        }
-                    }
-                    else
-                    {
-                        yield return shader;
-                    }
-                }
-                
-            }
-
-            Debug.WriteLine($"Found {shaders.Count} shaders");
-        }
     }
 
     public class ShaderExport

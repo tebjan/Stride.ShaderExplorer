@@ -125,7 +125,7 @@ namespace Stride.ShaderParser
             return name;
         }
 
-        public static bool TryParseEffect(string shaderName, Dictionary<string, ShaderViewModel> shaders, out ParsedShader result)
+        public static bool TryParseEffect(string shaderName, IReadOnlyDictionary<string, ShaderViewModel> shaders, out ParsedShader result)
         {
             result = null;
 
@@ -155,7 +155,7 @@ namespace Stride.ShaderParser
             }
         }
 
-        private static bool TryParseEffect(string shaderName, Dictionary<string, ShaderViewModel> shaders, ParsedShaderRef resultRef)
+        private static bool TryParseEffect(string shaderName, IReadOnlyDictionary<string, ShaderViewModel> shaders, ParsedShaderRef resultRef)
         {
             lock (parserCacheLock)
             {

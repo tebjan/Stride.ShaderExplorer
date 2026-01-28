@@ -62,7 +62,7 @@ namespace StrideShaderExplorer
         private void OnDetectVvvvPathsClick(object sender, RoutedEventArgs e)
         {
             var mvm = (MainViewModel)DataContext;
-            var detectedPaths = mvm.DetectVvvvShaderPaths();
+            var detectedPaths = VvvvPathResolver.Instance.GetVLStrideShaderPaths();
 
             if (detectedPaths.Count == 0)
             {

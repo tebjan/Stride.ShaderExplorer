@@ -235,7 +235,7 @@ namespace StrideShaderExplorer
                 try
                 {
                     ViewModel.ExportShaderHierarchy(dialog.FileName);
-                    MessageBox.Show($"Exported {ViewModel.shaders.Count} shaders to:\n{dialog.FileName}",
+                    MessageBox.Show($"Exported {ViewModel.ShaderMap.Count} shaders to:\n{dialog.FileName}",
                         "Export Complete", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
                 catch (Exception ex)

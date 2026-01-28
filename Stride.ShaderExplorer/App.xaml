@@ -11,6 +11,8 @@
             FalseBrush="#33d4d4d4"
             TrueBrush="#d4d4d4" />
 
+        <local:SearchModeConverter x:Key="SearchModeConverter" />
+
         <Style TargetType="Button">
             <Setter Property="Background" Value="#FF900520" />
             <Setter Property="Foreground" Value="#d4d4d4" />
