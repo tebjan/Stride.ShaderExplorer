@@ -23,6 +23,8 @@ namespace StrideShaderExplorer
         private const string StrideEnvironmentVariable = "StrideDir";
         private const string NugetEnvironmentVariable = "NUGET_PACKAGES";
 
+        private readonly NuGetDownloader _nugetDownloader = new();
+
         private string _filterText;
         private bool _directParentsOnly = true;
         private ShaderViewModel _selectedShader;
@@ -130,36 +132,21 @@ namespace StrideShaderExplorer
             // check if nuget package dir is set
             var nugetPackageDir = Environment.GetEnvironmentVariable(NugetEnvironmentVariable);
             if (nugetPackageDir != null)
-            {
                 return nugetPackageDir;
-            }
 
             // try to resolve nuget package dir
             var userDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             nugetPackageDir = Path.Combine(userDir, ".nuget", "packages");
             if (Directory.Exists(nugetPackageDir))
-            {
                 return nugetPackageDir;
-            }
 
-            // try vvvv nuget package dir in programs\vvvv\latest\packs
-            var progs = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-            var vvvvDir = Path.Combine(progs, "vvvv");
-            if (Directory.Exists(vvvvDir))
-            {
-                var latestDir = Directory.GetDirectories(vvvvDir).OrderByDescending(d => d).FirstOrDefault();
-                if (latestDir != null)
-                {
-                    nugetPackageDir = Path.Combine(latestDir, "packs");
-                    if (Directory.Exists(nugetPackageDir))
-                    {
-                        return nugetPackageDir;
-                    }
-                }
-            }
-              
+            // try vvvv packs dir
+            var vvvvPacksDir = VvvvPathResolver.Instance.GetPacksDir();
+            if (vvvvPacksDir != null)
+                return vvvvPacksDir;
+
             // return folder of this program
-            return Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);        
+            return Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
         }
 
         internal void Refresh()
@@ -171,12 +158,71 @@ namespace StrideShaderExplorer
                 {
                     case StrideSourceDirMode.Official:
                         var nugetPackageDir = ResolveNugetPackageDir();
-                        var directories = Directory.GetDirectories(nugetPackageDir) //package dir
-                            .Where(dir => Path.GetFileName(dir).StartsWith("stride", StringComparison.OrdinalIgnoreCase)) //stride folders
-                            .Where(dir => Directory.EnumerateFileSystemEntries(dir).Any())
-                            .Select(dir => Directory.GetDirectories(dir).Where(subdir => !subdir.EndsWith("-dev")) //exclude local build package
-                            .OrderBy(subdir2 => subdir2, StringComparer.OrdinalIgnoreCase).LastOrDefault()); //latest version
-                        paths = directories.ToList();
+                        var strideDirs = Directory.GetDirectories(nugetPackageDir)
+                            .Where(dir => Path.GetFileName(dir).StartsWith("stride", StringComparison.OrdinalIgnoreCase))
+                            .Where(dir => Directory.EnumerateFileSystemEntries(dir).Any());
+
+                        paths = new List<string>();
+                        foreach (var dir in strideDirs)
+                        {
+                            var subDirs = Directory.GetDirectories(dir).Where(subdir => !subdir.EndsWith("-dev")).ToList();
+                            if (subDirs.Count > 0)
+                            {
+                                // Standard nuget cache structure: stride.rendering/4.0.0.1234/
+                                var latest = subDirs.OrderBy(d => d, StringComparer.OrdinalIgnoreCase).LastOrDefault();
+                                if (latest != null) paths.Add(latest);
+                            }
+                            else
+                            {
+                                // ExcludeVersion download: Stride.Rendering/ (no version subfolder)
+                                paths.Add(dir);
+                            }
+                        }
+
+                        // If no Stride packages found in nuget, try vvvv's packs folder
+                        if (paths.Count == 0)
+                        {
+                            var vvvvPaths = DetectVvvvStridePackages();
+                            if (vvvvPaths.Count > 0)
+                                paths = vvvvPaths;
+                        }
+
+                        // If still no packages found, offer to download via NuGet
+                        if (paths.Count == 0)
+                        {
+                            var result = MessageBox.Show(
+                                "No Stride shader packages found.\n\n" +
+                                "Would you like to download them via NuGet?\n" +
+                                "(Requires nuget CLI to be installed)",
+                                "Stride Packages Missing",
+                                MessageBoxButton.YesNo,
+                                MessageBoxImage.Question);
+
+                            if (result == MessageBoxResult.Yes)
+                            {
+                                if (DownloadStridePackages())
+                                {
+                                    // Re-scan for packages after download
+                                    strideDirs = Directory.GetDirectories(nugetPackageDir)
+                                        .Where(dir => Path.GetFileName(dir).StartsWith("stride", StringComparison.OrdinalIgnoreCase))
+                                        .Where(dir => Directory.EnumerateFileSystemEntries(dir).Any());
+
+                                    foreach (var dir in strideDirs)
+                                    {
+                                        var subDirs = Directory.GetDirectories(dir).Where(subdir => !subdir.EndsWith("-dev")).ToList();
+                                        if (subDirs.Count > 0)
+                                        {
+                                            var latest = subDirs.OrderBy(d => d, StringComparer.OrdinalIgnoreCase).LastOrDefault();
+                                            if (latest != null) paths.Add(latest);
+                                        }
+                                        else
+                                        {
+                                            paths.Add(dir);
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         break;
                     case StrideSourceDirMode.Dev:
                         var strideDir = Environment.GetEnvironmentVariable(StrideEnvironmentVariable);
@@ -267,60 +313,50 @@ namespace StrideShaderExplorer
             Refresh();
         }
 
+        private bool DownloadStridePackages()
+        {
+            var missing = _nugetDownloader.GetMissingPackages();
+            if (missing.Length == 0)
+            {
+                MessageBox.Show("All Stride packages are already installed.",
+                    "Already Installed", MessageBoxButton.OK, MessageBoxImage.Information);
+                return true;
+            }
+
+            MessageBox.Show(
+                $"Downloading {missing.Length} package(s):\n\n{string.Join("\n", missing)}\n\nClick OK to start.",
+                "Downloading", MessageBoxButton.OK, MessageBoxImage.Information);
+
+            var result = _nugetDownloader.DownloadMissingPackages();
+
+            if (result.NoToolsFound)
+            {
+                MessageBox.Show(
+                    "Neither nuget.exe nor dotnet CLI found.\n\nPlease install .NET SDK or nuget.exe.",
+                    "No Tools Found", MessageBoxButton.OK, MessageBoxImage.Error);
+                return false;
+            }
+
+            if (result.Success)
+            {
+                MessageBox.Show("Stride packages downloaded successfully!",
+                    "Download Complete", MessageBoxButton.OK, MessageBoxImage.Information);
+                return true;
+            }
+
+            MessageBox.Show($"Download failed:\n{string.Join("\n", result.Errors)}",
+                "Download Failed", MessageBoxButton.OK, MessageBoxImage.Error);
+            return false;
+        }
+
+        private List<string> DetectVvvvStridePackages()
+        {
+            return VvvvPathResolver.Instance.GetStridePackagePaths();
+        }
+
         public List<string> DetectVvvvShaderPaths()
         {
-            var paths = new List<string>();
-            try
-            {
-                var vvvvDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "vvvv");
-                if (!Directory.Exists(vvvvDir)) return paths;
-
-                // Only scan vvvv_gamma_* directories, get the latest one
-                var latestVersionDir = Directory.GetDirectories(vvvvDir)
-                    .Where(d => Path.GetFileName(d).StartsWith("vvvv_gamma_", StringComparison.OrdinalIgnoreCase))
-                    .OrderByDescending(d => d)
-                    .FirstOrDefault();
-
-                if (latestVersionDir == null) return paths;
-
-                // Try new structure first: vvvv_gamma_*/packs/VL.Stride.Runtime/stride/Assets/Effects
-                var packsDir = Path.Combine(latestVersionDir, "packs");
-                if (Directory.Exists(packsDir))
-                {
-                    var runtimeDir = Path.Combine(packsDir, "VL.Stride.Runtime");
-                    if (Directory.Exists(runtimeDir))
-                    {
-                        var effectsPath = Path.Combine(runtimeDir, "stride", "Assets", "Effects");
-                        if (Directory.Exists(effectsPath))
-                        {
-                            paths.Add(effectsPath);
-                            return paths;
-                        }
-                    }
-                }
-
-                // Try old structure: vvvv_gamma_*/lib/packs/VL.Stride.Runtime.*/stride/Assets/Effects
-                var libPacksDir = Path.Combine(latestVersionDir, "lib", "packs");
-                if (Directory.Exists(libPacksDir))
-                {
-                    var runtimeDir = Directory.GetDirectories(libPacksDir)
-                        .Where(d => Path.GetFileName(d).StartsWith("VL.Stride.Runtime", StringComparison.OrdinalIgnoreCase))
-                        .OrderByDescending(d => d)
-                        .FirstOrDefault();
-
-                    if (runtimeDir != null)
-                    {
-                        var effectsPath = Path.Combine(runtimeDir, "stride", "Assets", "Effects");
-                        if (Directory.Exists(effectsPath))
-                            paths.Add(effectsPath);
-                    }
-                }
-            }
-            catch (Exception ex) when (ex is UnauthorizedAccessException || ex is IOException)
-            {
-                Debug.WriteLine($"Error detecting vvvv paths: {ex.Message}");
-            }
-            return paths;
+            return VvvvPathResolver.Instance.GetVLStrideShaderPaths();
         }
 
         public void ExportShaderHierarchy(string filePath)
