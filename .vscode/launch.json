@@ -1,0 +1,55 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run SDSL Extension",
+            "type": "extensionHost",
+            "request": "launch",
+            "args": [
+                "--extensionDevelopmentPath=${workspaceFolder}/VSCode/vscode-extension",
+                "${workspaceFolder}/VSCode/test-workspace"
+            ],
+            "outFiles": [
+                "${workspaceFolder}/VSCode/vscode-extension/dist/**/*.js"
+            ],
+            "preLaunchTask": "watch-extension",
+            "sourceMaps": true
+        },
+        {
+            "name": "Run SDSL Extension (Quick)",
+            "type": "extensionHost",
+            "request": "launch",
+            "args": [
+                "--extensionDevelopmentPath=${workspaceFolder}/VSCode/vscode-extension",
+                "${workspaceFolder}/VSCode/test-workspace"
+            ],
+            "outFiles": [
+                "${workspaceFolder}/VSCode/vscode-extension/dist/**/*.js"
+            ],
+            "sourceMaps": true
+        },
+        {
+            "name": "Debug Language Server",
+            "type": "coreclr",
+            "request": "launch",
+            "program": "dotnet",
+            "args": [
+                "run",
+                "--project",
+                "${workspaceFolder}/VSCode/language-server"
+            ],
+            "cwd": "${workspaceFolder}/VSCode/language-server",
+            "console": "integratedTerminal"
+        }
+    ],
+    "compounds": [
+        {
+            "name": "SDSL Extension + Server",
+            "configurations": [
+                "Run SDSL Extension",
+                "Debug Language Server"
+            ],
+            "stopAll": true
+        }
+    ]
+}

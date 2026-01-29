@@ -1,0 +1,337 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Stride Shader Language",
+  "scopeName": "source.sdsl",
+  "fileTypes": ["sdsl"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#preprocessor" },
+    { "include": "#shader-declaration" },
+    { "include": "#struct-declaration" },
+    { "include": "#cbuffer-declaration" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#semantics" },
+    { "include": "#functions" },
+    { "include": "#numbers" },
+    { "include": "#strings" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.block.sdsl",
+          "begin": "/\\*",
+          "end": "\\*/",
+          "captures": {
+            "0": { "name": "punctuation.definition.comment.sdsl" }
+          }
+        },
+        {
+          "name": "comment.line.double-slash.documentation.sdsl",
+          "match": "///.*$"
+        },
+        {
+          "name": "comment.line.double-slash.sdsl",
+          "match": "//.*$"
+        }
+      ]
+    },
+    "preprocessor": {
+      "patterns": [
+        {
+          "name": "meta.preprocessor.sdsl",
+          "match": "^\\s*(#)\\s*(define|undef|if|ifdef|ifndef|elif|else|endif|include|line|pragma|error|warning|region|endregion)\\b.*$",
+          "captures": {
+            "1": { "name": "punctuation.definition.directive.sdsl" },
+            "2": { "name": "keyword.control.directive.sdsl" }
+          }
+        }
+      ]
+    },
+    "shader-declaration": {
+      "patterns": [
+        {
+          "name": "meta.shader.sdsl",
+          "begin": "\\b(shader|effect|mixin)\\s+([A-Za-z_][A-Za-z0-9_]*)(?:\\s*(<[^>]+>))?",
+          "beginCaptures": {
+            "1": { "name": "keyword.declaration.shader.sdsl" },
+            "2": { "name": "entity.name.type.shader.sdsl" },
+            "3": { "name": "meta.generic.sdsl" }
+          },
+          "end": "(?=\\{)|;",
+          "patterns": [
+            {
+              "match": ":\\s*([A-Za-z_][A-Za-z0-9_]*)",
+              "captures": {
+                "1": { "name": "entity.other.inherited-class.sdsl" }
+              }
+            },
+            {
+              "match": ",\\s*([A-Za-z_][A-Za-z0-9_]*)",
+              "captures": {
+                "1": { "name": "entity.other.inherited-class.sdsl" }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "struct-declaration": {
+      "patterns": [
+        {
+          "name": "meta.struct.sdsl",
+          "match": "\\b(struct|class)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.struct.sdsl" },
+            "2": { "name": "entity.name.type.struct.sdsl" }
+          }
+        }
+      ]
+    },
+    "cbuffer-declaration": {
+      "patterns": [
+        {
+          "name": "meta.cbuffer.sdsl",
+          "match": "\\b(cbuffer|rgroup)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.cbuffer.sdsl" },
+            "2": { "name": "entity.name.type.cbuffer.sdsl" }
+          }
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.sdsl",
+          "match": "\\b(if|else|for|foreach|while|do|switch|case|default|break|continue|return|discard)\\b"
+        },
+        {
+          "name": "keyword.declaration.sdsl",
+          "match": "\\b(shader|effect|mixin|class|struct|namespace|using|typedef|cbuffer|rgroup)\\b"
+        },
+        {
+          "name": "storage.modifier.sdsl",
+          "match": "\\b(stage|stream|streams|compose|override|abstract|virtual|clone|static|const|extern|inline|partial|internal)\\b"
+        },
+        {
+          "name": "storage.modifier.interpolation.sdsl",
+          "match": "\\b(nointerpolation|linear|centroid|noperspective|sample)\\b"
+        },
+        {
+          "name": "storage.modifier.memory.sdsl",
+          "match": "\\b(in|out|inout|uniform|shared|groupshared|globallycoherent|volatile|precise)\\b"
+        },
+        {
+          "name": "storage.modifier.matrix.sdsl",
+          "match": "\\b(row_major|column_major)\\b"
+        },
+        {
+          "name": "constant.language.sdsl",
+          "match": "\\b(true|false|null)\\b"
+        },
+        {
+          "name": "variable.language.sdsl",
+          "match": "\\b(this|base)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "storage.type.primitive.sdsl",
+          "match": "\\b(void|bool|int|uint|dword|half|float|double|fixed)\\b"
+        },
+        {
+          "name": "storage.type.vector.sdsl",
+          "match": "\\b(bool|int|uint|half|float|double|fixed)[2-4]\\b"
+        },
+        {
+          "name": "storage.type.matrix.sdsl",
+          "match": "\\b(bool|int|uint|half|float|double|fixed)[2-4]x[2-4]\\b"
+        },
+        {
+          "name": "storage.type.sampler.sdsl",
+          "match": "\\b(SamplerState|SamplerComparisonState|sampler|sampler1D|sampler2D|sampler3D|samplerCUBE)\\b"
+        },
+        {
+          "name": "storage.type.texture.sdsl",
+          "match": "\\b(Texture1D|Texture1DArray|Texture2D|Texture2DArray|Texture2DMS|Texture2DMSArray|Texture3D|TextureCube|TextureCubeArray)\\b"
+        },
+        {
+          "name": "storage.type.texture.rw.sdsl",
+          "match": "\\b(RWTexture1D|RWTexture1DArray|RWTexture2D|RWTexture2DArray|RWTexture3D)\\b"
+        },
+        {
+          "name": "storage.type.buffer.sdsl",
+          "match": "\\b(Buffer|ByteAddressBuffer|StructuredBuffer|ConsumeStructuredBuffer|AppendStructuredBuffer|RWBuffer|RWByteAddressBuffer|RWStructuredBuffer)\\b"
+        },
+        {
+          "name": "storage.type.geometry.sdsl",
+          "match": "\\b(point|line|triangle|lineadj|triangleadj|InputPatch|OutputPatch|PointStream|LineStream|TriangleStream)\\b"
+        },
+        {
+          "name": "storage.type.stride.sdsl",
+          "match": "\\b(Color|Color3|Color4)\\b"
+        }
+      ]
+    },
+    "semantics": {
+      "patterns": [
+        {
+          "name": "support.variable.semantic.sdsl",
+          "match": "\\b(POSITION|POSITIONH|POSITION_WS|NORMAL|NORMAL_WS|NORMALWS|TANGENT|BINORMAL|COLOR|COLOR[0-3])\\b"
+        },
+        {
+          "name": "support.variable.semantic.sdsl",
+          "match": "\\b(TEXCOORD[0-9]?|BLENDWEIGHT|BLENDINDICES|PSIZE|DEPTH|FOG|TESSFACTOR|VFACE|VPOS)\\b"
+        },
+        {
+          "name": "support.variable.semantic.system.sdsl",
+          "match": "\\b(SV_Position|SV_Target[0-7]?|SV_Depth|SV_DepthGreater|SV_DepthLessEqual|SV_Coverage|SV_IsFrontFace|SV_SampleIndex)\\b"
+        },
+        {
+          "name": "support.variable.semantic.system.sdsl",
+          "match": "\\b(SV_VertexID|SV_InstanceID|SV_PrimitiveID|SV_RenderTargetArrayIndex|SV_ViewportArrayIndex|SV_ClipDistance|SV_CullDistance)\\b"
+        },
+        {
+          "name": "support.variable.semantic.system.sdsl",
+          "match": "\\b(SV_DispatchThreadID|SV_GroupID|SV_GroupIndex|SV_GroupThreadID|SV_GSInstanceID)\\b"
+        },
+        {
+          "name": "support.variable.semantic.system.sdsl",
+          "match": "\\b(SV_DomainLocation|SV_InsideTessFactor|SV_OutputControlPointID|SV_TessFactor)\\b"
+        }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
+          "name": "support.function.math.sdsl",
+          "match": "\\b(abs|acos|acosh|asin|asinh|atan|atan2|atanh|ceil|clamp|cos|cosh|degrees|exp|exp2|floor|fma|fmod|frac|frexp|ldexp|lerp|log|log10|log2|mad|max|min|modf|pow|radians|rcp|round|rsqrt|saturate|sign|sin|sincos|sinh|smoothstep|sqrt|step|tan|tanh|trunc)\\b"
+        },
+        {
+          "name": "support.function.vector.sdsl",
+          "match": "\\b(all|any|cross|determinant|distance|dot|dst|faceforward|length|lit|mul|normalize|reflect|refract|transpose)\\b"
+        },
+        {
+          "name": "support.function.texture.sdsl",
+          "match": "\\b(tex1D|tex1Dbias|tex1Dgrad|tex1Dlod|tex1Dproj|tex2D|tex2Dbias|tex2Dgrad|tex2Dlod|tex2Dproj|tex3D|tex3Dbias|tex3Dgrad|tex3Dlod|tex3Dproj|texCUBE|texCUBEbias|texCUBEgrad|texCUBElod|texCUBEproj)\\b"
+        },
+        {
+          "name": "support.function.texture.method.sdsl",
+          "match": "\\b(Sample|SampleBias|SampleCmp|SampleCmpLevelZero|SampleGrad|SampleLevel|Load|GetDimensions|CalculateLevelOfDetail|CalculateLevelOfDetailUnclamped|GetSamplePosition)\\b"
+        },
+        {
+          "name": "support.function.texture.gather.sdsl",
+          "match": "\\b(Gather|GatherRed|GatherGreen|GatherBlue|GatherAlpha|GatherCmp|GatherCmpRed|GatherCmpGreen|GatherCmpBlue|GatherCmpAlpha)\\b"
+        },
+        {
+          "name": "support.function.buffer.sdsl",
+          "match": "\\b(Load|Load2|Load3|Load4|Store|Store2|Store3|Store4|Append|Consume|IncrementCounter|DecrementCounter)\\b"
+        },
+        {
+          "name": "support.function.derivative.sdsl",
+          "match": "\\b(ddx|ddx_coarse|ddx_fine|ddy|ddy_coarse|ddy_fine|fwidth)\\b"
+        },
+        {
+          "name": "support.function.cast.sdsl",
+          "match": "\\b(asfloat|asint|asuint|asdouble|f16tof32|f32tof16|D3DCOLORtoUBYTE4)\\b"
+        },
+        {
+          "name": "support.function.bit.sdsl",
+          "match": "\\b(countbits|firstbithigh|firstbitlow|reversebits)\\b"
+        },
+        {
+          "name": "support.function.barrier.sdsl",
+          "match": "\\b(AllMemoryBarrier|AllMemoryBarrierWithGroupSync|DeviceMemoryBarrier|DeviceMemoryBarrierWithGroupSync|GroupMemoryBarrier|GroupMemoryBarrierWithGroupSync)\\b"
+        },
+        {
+          "name": "support.function.interlocked.sdsl",
+          "match": "\\b(InterlockedAdd|InterlockedAnd|InterlockedCompareExchange|InterlockedCompareStore|InterlockedExchange|InterlockedMax|InterlockedMin|InterlockedOr|InterlockedXor)\\b"
+        },
+        {
+          "name": "support.function.misc.sdsl",
+          "match": "\\b(abort|clip|errorf|printf|isfinite|isinf|isnan|noise|RestartStrip)\\b"
+        },
+        {
+          "name": "support.function.tessellation.sdsl",
+          "match": "\\b(Process2DQuadTessFactorsAvg|Process2DQuadTessFactorsMax|Process2DQuadTessFactorsMin|ProcessIsolineTessFactors|ProcessQuadTessFactorsAvg|ProcessQuadTessFactorsMax|ProcessQuadTessFactorsMin|ProcessTriTessFactorsAvg|ProcessTriTessFactorsMax|ProcessTriTessFactorsMin)\\b"
+        },
+        {
+          "name": "support.function.attribute.sdsl",
+          "match": "\\b(EvaluateAttributeAtCentroid|EvaluateAttributeAtSample|EvaluateAttributeSnapped|GetRenderTargetSampleCount|GetRenderTargetSamplePosition)\\b"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.sdsl",
+          "match": "\\b0[xX][0-9a-fA-F]+[uUlL]*\\b"
+        },
+        {
+          "name": "constant.numeric.float.sdsl",
+          "match": "\\b[0-9]*\\.[0-9]+([eE][+-]?[0-9]+)?[fFhHlL]?\\b"
+        },
+        {
+          "name": "constant.numeric.float.sdsl",
+          "match": "\\b[0-9]+\\.[0-9]*([eE][+-]?[0-9]+)?[fFhHlL]?\\b"
+        },
+        {
+          "name": "constant.numeric.float.sdsl",
+          "match": "\\b[0-9]+[eE][+-]?[0-9]+[fFhHlL]?\\b"
+        },
+        {
+          "name": "constant.numeric.integer.sdsl",
+          "match": "\\b[0-9]+[uUlL]*\\b"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.sdsl",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.sdsl",
+              "match": "\\\\."
+            }
+          ]
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.arithmetic.sdsl",
+          "match": "[+\\-*/%]"
+        },
+        {
+          "name": "keyword.operator.comparison.sdsl",
+          "match": "(==|!=|<=|>=|<|>)"
+        },
+        {
+          "name": "keyword.operator.logical.sdsl",
+          "match": "(&&|\\|\\||!)"
+        },
+        {
+          "name": "keyword.operator.bitwise.sdsl",
+          "match": "(&|\\||\\^|~|<<|>>)"
+        },
+        {
+          "name": "keyword.operator.assignment.sdsl",
+          "match": "(=|\\+=|-=|\\*=|/=|%=|&=|\\|=|\\^=|<<=|>>=)"
+        },
+        {
+          "name": "keyword.operator.ternary.sdsl",
+          "match": "(\\?|:)"
+        }
+      ]
+    }
+  }
+}

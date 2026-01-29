@@ -1,0 +1,120 @@
+{
+  "name": "stride-shader-tools",
+  "displayName": "Stride Shader Tools",
+  "description": "IntelliSense, debugging, and AI assistance for Stride SDSL shaders",
+  "version": "0.1.0",
+  "publisher": "stride-community",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Debuggers"
+  ],
+  "keywords": [
+    "stride",
+    "sdsl",
+    "shader",
+    "hlsl",
+    "game engine"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "sdsl",
+        "aliases": [
+          "Stride Shader",
+          "SDSL"
+        ],
+        "extensions": [
+          ".sdsl"
+        ],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/sdsl-light.svg",
+          "dark": "./icons/sdsl-dark.svg"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "sdsl",
+        "scopeName": "source.sdsl",
+        "path": "./syntaxes/sdsl.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "Stride Shader Tools",
+      "properties": {
+        "strideShaderTools.languageServer.path": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the language server executable. Leave empty to use bundled server."
+        },
+        "strideShaderTools.shaderPaths": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "Additional paths to search for shader files."
+        },
+        "strideShaderTools.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Traces the communication between VS Code and the language server."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "strideShaderTools.restartServer",
+        "title": "Stride Shaders: Restart Language Server"
+      },
+      {
+        "command": "strideShaderTools.showInheritanceTree",
+        "title": "Stride Shaders: Show Inheritance Tree"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "npm run check-types && node esbuild.js",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --preserveWatchOutput",
+    "check-types": "tsc --noEmit",
+    "package": "npm run check-types && node esbuild.js --production",
+    "lint": "biome check src",
+    "lint:fix": "biome check --write src",
+    "format": "biome format --write src",
+    "test": "vscode-test"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.95.0",
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.4.1",
+    "@vscode/vsce": "^3.2.0",
+    "esbuild": "^0.24.0",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^5.7.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tebjan/Stride.ShaderExplorer"
+  },
+  "license": "MIT"
+}

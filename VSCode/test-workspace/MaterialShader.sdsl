@@ -1,0 +1,29 @@
+// Material shader example
+shader MaterialShader : MaterialSurfacePixelStageCompositor
+{
+    // PBR parameters
+    stage float Metalness = 0.0f;
+    stage float Roughness = 0.5f;
+    stage float4 BaseColor = float4(0.8, 0.8, 0.8, 1.0);
+
+    // Textures
+    compose ComputeColor albedoMap;
+    compose ComputeColor normalMap;
+    compose ComputeColor roughnessMap;
+
+    override void Compute()
+    {
+        // Get base color from texture or parameter
+        float4 albedo = albedoMap.Compute() * BaseColor;
+
+        // Sample roughness
+        float rough = roughnessMap.Compute().r * Roughness;
+
+        // Apply to streams
+        streams.matDiffuse = albedo;
+        streams.matSpecular = float4(1, 1, 1, 1);
+        streams.matGlossiness = 1.0 - rough;
+
+        base.Compute();
+    }
+};

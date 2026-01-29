@@ -1,0 +1,99 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "watch-extension",
+            "type": "npm",
+            "script": "watch",
+            "path": "VSCode/vscode-extension",
+            "isBackground": true,
+            "problemMatcher": {
+                "owner": "typescript",
+                "fileLocation": "relative",
+                "pattern": {
+                    "regexp": "^([^\\s].*?):(\\d+):(\\d+):\\s+(error|warning):\\s+(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "column": 3,
+                    "severity": 4,
+                    "message": 5
+                },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "^\\[watch\\] build started",
+                    "endsPattern": "^\\[watch\\] build finished"
+                }
+            },
+            "presentation": {
+                "reveal": "silent"
+            }
+        },
+        {
+            "label": "compile-extension",
+            "type": "npm",
+            "script": "compile",
+            "path": "VSCode/vscode-extension",
+            "problemMatcher": "$tsc",
+            "group": "build",
+            "presentation": {
+                "reveal": "silent"
+            }
+        },
+        {
+            "label": "build-language-server",
+            "type": "shell",
+            "command": "dotnet",
+            "args": [
+                "build",
+                "--nologo"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/VSCode/language-server"
+            },
+            "problemMatcher": "$msCompile",
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "build-all-vscode",
+            "dependsOn": [
+                "compile-extension",
+                "build-language-server"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "build-server-then-watch",
+            "dependsOn": [
+                "build-language-server",
+                "watch-extension"
+            ],
+            "dependsOrder": "sequence",
+            "problemMatcher": []
+        },
+        {
+            "label": "lint-extension",
+            "type": "npm",
+            "script": "lint",
+            "path": "VSCode/vscode-extension",
+            "problemMatcher": []
+        },
+        {
+            "label": "package-extension",
+            "type": "npm",
+            "script": "package",
+            "path": "VSCode/vscode-extension",
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always"
+            }
+        }
+    ]
+}

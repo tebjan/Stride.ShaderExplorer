@@ -1,0 +1,8 @@
+{
+    "recommendations": [
+        "biomejs.biome",
+        "connor4312.esbuild-problem-matchers",
+        "ms-vscode.vscode-typescript-next",
+        "ms-dotnettools.csharp"
+    ]
+}

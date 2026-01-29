@@ -1,0 +1,33 @@
+{
+    "python-envs.defaultEnvManager": "ms-python.python:conda",
+    "python-envs.defaultPackageManager": "ms-python.python:conda",
+    "typescript.tsdk": "VSCode/Extension/node_modules/typescript/lib",
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "biomejs.biome",
+    "editor.codeActionsOnSave": {
+        "source.organizeImports.biome": "explicit",
+        "quickfix.biome": "explicit"
+    },
+    "[typescript]": {
+        "editor.defaultFormatter": "biomejs.biome"
+    },
+    "[json]": {
+        "editor.defaultFormatter": "biomejs.biome"
+    },
+    "[jsonc]": {
+        "editor.defaultFormatter": "biomejs.biome"
+    },
+    "files.exclude": {
+        "**/node_modules": true,
+        "**/bin": true,
+        "**/obj": true,
+        "VSCode/Extension/out": true,
+        "VSCode/Extension/dist": true,
+        "**/*.vsix": true
+    },
+    "search.exclude": {
+        "**/node_modules": true,
+        "VSCode/Extension/out": true,
+        "VSCode/Extension/dist": true
+    }
+}

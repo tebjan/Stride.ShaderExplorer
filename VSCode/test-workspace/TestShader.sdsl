@@ -1,0 +1,34 @@
+// Test shader for Stride Shader Tools extension
+shader TestShader : ComputeShaderBase
+{
+    // Stage variables
+    stage float4 Color = float4(1, 0, 0, 1);
+    stage float Intensity = 1.0f;
+
+    // Composition
+    compose ComputeColor diffuseMap;
+
+    // Stream variables
+    stream float2 TexCoord;
+    stream float3 Normal;
+
+    // Override compute method
+    override void Compute()
+    {
+        // Sample the diffuse texture
+        float4 diffuse = diffuseMap.Compute();
+
+        // Apply color and intensity
+        float4 result = diffuse * Color * Intensity;
+
+        // Use some HLSL intrinsics
+        result.rgb = saturate(result.rgb);
+        float brightness = dot(result.rgb, float3(0.299, 0.587, 0.114));
+
+        // Fresnel effect
+        float3 viewDir = normalize(Eye.xyz - streams.PositionWS.xyz);
+        float fresnel = pow(1.0 - saturate(dot(viewDir, streams.Normal)), 5.0);
+
+        streams.ColorTarget = lerp(result, float4(1, 1, 1, 1), fresnel * 0.3);
+    }
+};
