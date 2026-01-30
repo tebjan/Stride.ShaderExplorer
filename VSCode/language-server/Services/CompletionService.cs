@@ -179,7 +179,9 @@ public class CompletionService
                 Label = k,
                 Kind = CompletionItemKind.Keyword,
                 Detail = "Keyword",
-                SortText = "1_" + k
+                // "streams" is accessed far more often than "stream" is declared
+                // Give it higher priority (lower sort value = shown first)
+                SortText = k == "streams" ? "0_streams" : "1_" + k
             });
     }
 

@@ -1,0 +1,8 @@
+# Build output
+bin/
+obj/
+temp_build/
+
+# IDE
+.vs/
+*.user

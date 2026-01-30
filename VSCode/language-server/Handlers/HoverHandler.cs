@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using OmniSharp.Extensions.LanguageServer.Protocol.Client.Capabilities;
 using OmniSharp.Extensions.LanguageServer.Protocol.Document;
@@ -13,6 +14,15 @@ public class HoverHandler : HoverHandlerBase
     private readonly ShaderWorkspace _workspace;
     private readonly InheritanceResolver _inheritanceResolver;
     private readonly TextDocumentSyncHandler _syncHandler;
+
+    // Regex to find local variable declarations: "type varName" or "type varName = ..."
+    // Note: longer type names must come first (float4x4 before float4 before float, etc.)
+    private static readonly Regex LocalVarDeclRegex = new(
+        @"\b(float[234]x[234]|double[234]x[234]|int[234]x[234]|" +
+        @"float[234]|double[234]|half[234]|int[234]|uint[234]|bool[234]|" +
+        @"Color[34]?|float|double|half|int|uint|dword|bool|" +
+        @"SamplerState|SamplerComparisonState|Texture\w*)\s+(\w+)\s*(=|;|,|\))",
+        RegexOptions.Compiled);
 
     public HoverHandler(
         ILogger<HoverHandler> logger,
@@ -41,8 +51,8 @@ public class HoverHandler : HoverHandlerBase
             return Task.FromResult<Hover?>(null);
         }
 
-        var word = GetWordAtPosition(content, position);
-        _logger.LogInformation("Hover word: '{Word}'", word);
+        var (word, memberContext) = GetWordAndContextAtPosition(content, position);
+        _logger.LogInformation("Hover word: '{Word}', context: '{Context}'", word, memberContext ?? "none");
 
         if (string.IsNullOrEmpty(word))
         {
@@ -51,6 +61,15 @@ public class HoverHandler : HoverHandlerBase
 
         var path = uri.GetFileSystemPath();
         var currentShaderName = Path.GetFileNameWithoutExtension(path);
+        var currentParsed = _workspace.GetParsedShader(currentShaderName);
+
+        // If we have a member context (something.word), check for swizzle or member access
+        if (!string.IsNullOrEmpty(memberContext))
+        {
+            var memberHover = GetMemberAccessHover(memberContext, word, content, position, currentParsed, currentShaderName);
+            if (memberHover != null)
+                return Task.FromResult<Hover?>(memberHover);
+        }
 
         // Check if it's a shader name
         var shaderInfo = _workspace.GetShaderByName(word);
@@ -59,7 +78,7 @@ public class HoverHandler : HoverHandlerBase
         if (shaderInfo != null)
         {
             var parsed = _workspace.GetParsedShader(word);
-            var markdown = BuildShaderHoverContent(word, parsed, shaderInfo.FilePath);
+            var markdown = BuildShaderHoverContent(word, parsed, shaderInfo.DisplayPath);
 
             return Task.FromResult<Hover?>(new Hover
             {
@@ -71,8 +90,22 @@ public class HoverHandler : HoverHandlerBase
             });
         }
 
+        // Check for local variable in scope
+        var localVar = FindLocalVariable(content, position, word);
+        if (localVar != null)
+        {
+            var markdown = BuildLocalVariableHoverContent(localVar.Value.type, word);
+            return Task.FromResult<Hover?>(new Hover
+            {
+                Contents = new MarkedStringsOrMarkupContent(new MarkupContent
+                {
+                    Kind = MarkupKind.Markdown,
+                    Value = markdown
+                })
+            });
+        }
+
         // Check if it's a member of the current shader (including inherited members)
-        var currentParsed = _workspace.GetParsedShader(currentShaderName);
         _logger.LogInformation("Current shader '{ShaderName}' parsed: {Parsed}", currentShaderName, currentParsed != null);
 
         if (currentParsed != null)
@@ -83,8 +116,8 @@ public class HoverHandler : HoverHandlerBase
 
             if (variableMatch.Variable != null)
             {
-                var isInherited = variableMatch.DefinedIn != currentShaderName;
-                var markdown = BuildVariableHoverContent(variableMatch.Variable, variableMatch.DefinedIn!, isInherited);
+                var isLocal = variableMatch.DefinedIn == currentShaderName;
+                var markdown = BuildVariableHoverContent(variableMatch.Variable, variableMatch.DefinedIn!, !isLocal, isLocal);
                 return Task.FromResult<Hover?>(new Hover
                 {
                     Contents = new MarkedStringsOrMarkupContent(new MarkupContent
@@ -126,6 +159,21 @@ public class HoverHandler : HoverHandlerBase
             });
         }
 
+        // Check if it's a known HLSL type
+        var typeInfo = HlslTypeSystem.GetTypeInfo(word);
+        if (typeInfo != null)
+        {
+            var markdown = BuildTypeHoverContent(typeInfo);
+            return Task.FromResult<Hover?>(new Hover
+            {
+                Contents = new MarkedStringsOrMarkupContent(new MarkupContent
+                {
+                    Kind = MarkupKind.Markdown,
+                    Value = markdown
+                })
+            });
+        }
+
         // Always show a tooltip - helps user know hover is working
         return Task.FromResult<Hover?>(new Hover
         {
@@ -135,6 +183,224 @@ public class HoverHandler : HoverHandlerBase
                 Value = $"*No info available for* `{word}`"
             })
         });
+    }
+
+    /// <summary>
+    /// Handle hover on member access (something.member) including swizzles.
+    /// </summary>
+    private Hover? GetMemberAccessHover(string target, string member, string content, Position position, ParsedShader? currentParsed, string currentShaderName)
+    {
+        _logger.LogDebug("GetMemberAccessHover: target={Target}, member={Member}", target, member);
+
+        // Try to determine the type of the target
+        string? targetType = null;
+
+        // Check if target is a known stream type
+        if (HlslTypeSystem.IsStreamType(target))
+        {
+            // For streams.X, look up the stream member in inherited shaders
+            if (currentParsed != null)
+            {
+                var streamVar = _inheritanceResolver.FindVariable(currentParsed, member);
+                if (streamVar.Variable != null && streamVar.Variable.IsStream)
+                {
+                    var isLocal = streamVar.DefinedIn == currentShaderName;
+                    var markdown = BuildVariableHoverContent(streamVar.Variable, streamVar.DefinedIn!, !isLocal, isLocal);
+                    return new Hover
+                    {
+                        Contents = new MarkedStringsOrMarkupContent(new MarkupContent
+                        {
+                            Kind = MarkupKind.Markdown,
+                            Value = markdown
+                        })
+                    };
+                }
+            }
+            // Stream member not found in parsed shaders - might still be valid
+        }
+
+        // Check if target is a local variable
+        var localVar = FindLocalVariable(content, position, target);
+        if (localVar != null)
+        {
+            targetType = localVar.Value.type;
+            _logger.LogDebug("Found local var {Target} with type {Type}", target, targetType);
+        }
+
+        // Check if target is a shader member variable
+        if (targetType == null && currentParsed != null)
+        {
+            var varMatch = _inheritanceResolver.FindVariable(currentParsed, target);
+            if (varMatch.Variable != null)
+            {
+                targetType = varMatch.Variable.TypeName;
+                _logger.LogDebug("Found shader member {Target} with type {Type}", target, targetType);
+            }
+        }
+
+        // If we have a target type, check for swizzle
+        if (!string.IsNullOrEmpty(targetType))
+        {
+            var swizzleResult = HlslTypeSystem.InferSwizzleType(targetType, member);
+            if (swizzleResult.ResultType != null)
+            {
+                return new Hover
+                {
+                    Contents = new MarkedStringsOrMarkupContent(new MarkupContent
+                    {
+                        Kind = MarkupKind.Markdown,
+                        Value = $"`{swizzleResult.ResultType}` ← swizzle of `{targetType}`"
+                    })
+                };
+            }
+            else if (swizzleResult.Error != null)
+            {
+                return new Hover
+                {
+                    Contents = new MarkedStringsOrMarkupContent(new MarkupContent
+                    {
+                        Kind = MarkupKind.Markdown,
+                        Value = $"⚠️ {swizzleResult.Error}\n\n`{target}` is `{targetType}`"
+                    })
+                };
+            }
+        }
+
+        // Fallback: If member looks like a swizzle pattern, show generic swizzle info
+        if (IsLikelySwizzle(member))
+        {
+            var resultType = InferSwizzleResultType(member);
+            return new Hover
+            {
+                Contents = new MarkedStringsOrMarkupContent(new MarkupContent
+                {
+                    Kind = MarkupKind.Markdown,
+                    Value = $"`{resultType}` ← swizzle `.{member}`"
+                })
+            };
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Check if a string looks like a swizzle (x, xy, xyz, rgba, etc.)
+    /// </summary>
+    private static bool IsLikelySwizzle(string s)
+    {
+        if (string.IsNullOrEmpty(s) || s.Length > 4)
+            return false;
+
+        var lower = s.ToLowerInvariant();
+        return lower.All(c => "xyzwrgbastpq".Contains(c));
+    }
+
+    /// <summary>
+    /// Infer result type from swizzle pattern (assuming float base type).
+    /// </summary>
+    private static string InferSwizzleResultType(string swizzle)
+    {
+        return swizzle.Length switch
+        {
+            1 => "float",
+            2 => "float2",
+            3 => "float3",
+            4 => "float4",
+            _ => "float"
+        };
+    }
+
+    /// <summary>
+    /// Find a local variable declaration in the content before the current position.
+    /// Uses simple pattern matching to find "type varName" patterns.
+    /// </summary>
+    private (string type, int line)? FindLocalVariable(string content, Position position, string varName)
+    {
+        var lines = content.Split('\n');
+        var currentLine = (int)position.Line;
+
+        // Search backward from current line to find the variable declaration
+        var braceDepth = 0;
+        for (var lineIdx = currentLine; lineIdx >= 0; lineIdx--)
+        {
+            var lineContent = lines[lineIdx].TrimEnd('\r');
+
+            // Count braces to track scope (going backward: } enters block, { exits)
+            foreach (var c in lineContent)
+            {
+                if (c == '}') braceDepth++;
+                else if (c == '{') braceDepth--;
+            }
+
+            // If we've exited more scopes than entered, stop
+            if (braceDepth < 0)
+                break;
+
+            // Simple pattern: look for "type varName" where type is followed by the variable name
+            // Pattern: word boundary, type name, whitespace, exact variable name, then = or ; or , or )
+            var pattern = $@"\b(\w+)\s+{Regex.Escape(varName)}\s*[=;,\)]";
+            var match = Regex.Match(lineContent, pattern);
+
+            if (match.Success)
+            {
+                var typeName = match.Groups[1].Value;
+                // Verify it looks like a type (not a keyword like 'return', 'if', etc.)
+                if (IsLikelyTypeName(typeName))
+                {
+                    _logger.LogDebug("Found local var '{Var}' with type '{Type}' on line {Line}",
+                        varName, typeName, lineIdx);
+                    return (typeName, lineIdx);
+                }
+            }
+
+            // Also check for method parameters: (type varName, ...) or (type varName)
+            var paramPattern = $@"\(\s*(\w+)\s+{Regex.Escape(varName)}\s*[,\)]";
+            var paramMatch = Regex.Match(lineContent, paramPattern);
+            if (paramMatch.Success)
+            {
+                var typeName = paramMatch.Groups[1].Value;
+                if (IsLikelyTypeName(typeName))
+                {
+                    _logger.LogDebug("Found parameter '{Var}' with type '{Type}' on line {Line}",
+                        varName, typeName, lineIdx);
+                    return (typeName, lineIdx);
+                }
+            }
+        }
+
+        _logger.LogDebug("Local var '{Var}' not found", varName);
+        return null;
+    }
+
+    /// <summary>
+    /// Check if a word looks like a type name (not a keyword).
+    /// </summary>
+    private static bool IsLikelyTypeName(string word)
+    {
+        // Known HLSL types
+        if (HlslTypeSystem.GetTypeInfo(word) != null)
+            return true;
+
+        // Common type patterns
+        if (word.StartsWith("I") && word.Length > 1 && char.IsUpper(word[1]))
+            return true; // Interface types like IComputeColor
+
+        // Words that are definitely NOT types
+        var keywords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "return", "if", "else", "for", "while", "do", "switch", "case", "break",
+            "continue", "default", "const", "static", "override", "stage", "stream",
+            "in", "out", "inout", "uniform", "varying", "discard", "true", "false"
+        };
+
+        if (keywords.Contains(word))
+            return false;
+
+        // Assume PascalCase words are types
+        if (char.IsUpper(word[0]))
+            return true;
+
+        return false;
     }
 
     private static string BuildShaderHoverContent(string name, ParsedShader? parsed, string filePath)
@@ -173,7 +439,7 @@ public class HoverHandler : HoverHandlerBase
         return sb.ToString();
     }
 
-    private static string BuildVariableHoverContent(ShaderVariable variable, string shaderName, bool isInherited = false)
+    private static string BuildVariableHoverContent(ShaderVariable variable, string shaderName, bool isInherited = false, bool isLocal = false)
     {
         var sb = new System.Text.StringBuilder();
 
@@ -192,9 +458,89 @@ public class HoverHandler : HoverHandlerBase
         {
             sb.AppendLine($"*(inherited)* from **{shaderName}**");
         }
+        else if (isLocal)
+        {
+            sb.AppendLine("*Defined in this shader*");
+        }
         else
         {
-            sb.AppendLine($"Defined in **{shaderName}**");
+            sb.AppendLine($"*Defined in* **{shaderName}**");
+        }
+
+        return sb.ToString();
+    }
+
+    private static string BuildSwizzleHoverContent(string target, string targetType, string swizzle, string resultType)
+    {
+        var sb = new System.Text.StringBuilder();
+
+        sb.AppendLine("```sdsl");
+        sb.AppendLine($"{resultType}  // {target}.{swizzle}");
+        sb.AppendLine("```");
+        sb.AppendLine();
+        sb.AppendLine($"**Swizzle** of `{targetType}` → `{resultType}`");
+
+        // Add component info
+        var components = swizzle.Length;
+        if (components == 1)
+            sb.AppendLine($"\nExtracts component `{swizzle}` as scalar");
+        else
+            sb.AppendLine($"\nExtracts {components} components: `{string.Join("`, `", swizzle.ToCharArray())}`");
+
+        return sb.ToString();
+    }
+
+    private static string BuildLocalVariableHoverContent(string typeName, string varName)
+    {
+        var sb = new System.Text.StringBuilder();
+
+        sb.AppendLine("```sdsl");
+        sb.AppendLine($"{typeName} {varName}");
+        sb.AppendLine("```");
+        sb.AppendLine();
+        sb.AppendLine("*Local variable*");
+
+        // Add type info if known
+        var typeInfo = HlslTypeSystem.GetTypeInfo(typeName);
+        if (typeInfo != null)
+        {
+            if (typeInfo.IsScalar)
+                sb.AppendLine($"\nScalar type");
+            else if (typeInfo.IsVector)
+                sb.AppendLine($"\n{typeInfo.Rows}-component vector");
+            else if (typeInfo.IsMatrix)
+                sb.AppendLine($"\n{typeInfo.Rows}×{typeInfo.Cols} matrix");
+        }
+
+        return sb.ToString();
+    }
+
+    private static string BuildTypeHoverContent(HlslTypeSystem.TypeInfo typeInfo)
+    {
+        var sb = new System.Text.StringBuilder();
+
+        sb.AppendLine($"### {typeInfo.Name}");
+        sb.AppendLine();
+
+        if (typeInfo.IsScalar)
+        {
+            sb.AppendLine("**HLSL scalar type**");
+        }
+        else if (typeInfo.IsVector)
+        {
+            sb.AppendLine($"**HLSL vector type** ({typeInfo.Rows} components)");
+            sb.AppendLine();
+            sb.AppendLine($"- Base type: `{typeInfo.GetScalarTypeName()}`");
+            sb.AppendLine($"- Components: `.x`, `.y`" +
+                (typeInfo.Rows >= 3 ? ", `.z`" : "") +
+                (typeInfo.Rows >= 4 ? ", `.w`" : ""));
+        }
+        else if (typeInfo.IsMatrix)
+        {
+            sb.AppendLine($"**HLSL matrix type** ({typeInfo.Rows}×{typeInfo.Cols})");
+            sb.AppendLine();
+            sb.AppendLine($"- Base type: `{typeInfo.GetScalarTypeName()}`");
+            sb.AppendLine($"- Access: `[row][col]` or `._mRC`");
         }
 
         return sb.ToString();
@@ -264,7 +610,7 @@ public class HoverHandler : HoverHandlerBase
         }
         else
         {
-            sb.AppendLine($"Defined in **{shaderName}**");
+            sb.AppendLine("*Defined in this shader*");
         }
 
         return sb.ToString();
@@ -294,19 +640,23 @@ public class HoverHandler : HoverHandlerBase
         return docs.TryGetValue(name, out var doc) ? doc : null;
     }
 
-    private static string GetWordAtPosition(string content, Position position)
+    /// <summary>
+    /// Get the word at position and its member access context (what's before the dot).
+    /// Returns (word, contextBeforeDot) where contextBeforeDot is null if not a member access.
+    /// </summary>
+    private static (string word, string? memberContext) GetWordAndContextAtPosition(string content, Position position)
     {
         var lines = content.Split('\n');
         if (position.Line < 0 || position.Line >= lines.Length)
-            return string.Empty;
+            return (string.Empty, null);
 
         var line = lines[position.Line].TrimEnd('\r');
         if (position.Character < 0 || position.Character > line.Length)
-            return string.Empty;
+            return (string.Empty, null);
 
         // Find word boundaries
-        var start = position.Character;
-        var end = position.Character;
+        var start = (int)position.Character;
+        var end = (int)position.Character;
 
         while (start > 0 && (char.IsLetterOrDigit(line[start - 1]) || line[start - 1] == '_'))
             start--;
@@ -315,9 +665,28 @@ public class HoverHandler : HoverHandlerBase
             end++;
 
         if (start >= end)
-            return string.Empty;
+            return (string.Empty, null);
 
-        return line.Substring(start, end - start);
+        var word = line.Substring(start, end - start);
+
+        // Check if there's a dot before the word (member access)
+        string? memberContext = null;
+        if (start > 0 && line[start - 1] == '.')
+        {
+            // Find the target before the dot
+            var targetEnd = start - 1;
+            var targetStart = targetEnd;
+
+            while (targetStart > 0 && (char.IsLetterOrDigit(line[targetStart - 1]) || line[targetStart - 1] == '_'))
+                targetStart--;
+
+            if (targetStart < targetEnd)
+            {
+                memberContext = line.Substring(targetStart, targetEnd - targetStart);
+            }
+        }
+
+        return (word, memberContext);
     }
 
     protected override HoverRegistrationOptions CreateRegistrationOptions(

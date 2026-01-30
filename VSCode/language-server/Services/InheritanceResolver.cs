@@ -145,4 +145,74 @@ public class InheritanceResolver
     {
         return GetAllVariables(shader).Where(x => x.Variable.Name == name);
     }
+
+    /// <summary>
+    /// Search ALL indexed shaders to find which ones define a variable with the given name.
+    /// Returns shader names that directly define (not inherit) the variable.
+    /// </summary>
+    public List<string> FindShadersDefiningVariable(string variableName)
+    {
+        var result = new List<string>();
+
+        foreach (var shader in _workspace.GetAllShaders())
+        {
+            var parsed = _workspace.GetParsedShader(shader.Name);
+            if (parsed == null) continue;
+
+            // Check if this shader directly defines (not inherits) the variable
+            if (parsed.Variables.Any(v => string.Equals(v.Name, variableName, StringComparison.OrdinalIgnoreCase)))
+            {
+                result.Add(shader.Name);
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Search ALL indexed shaders to find which ones define a method with the given name.
+    /// Returns shader names that directly define (not inherit) the method.
+    /// </summary>
+    public List<string> FindShadersDefiningMethod(string methodName)
+    {
+        var result = new List<string>();
+
+        foreach (var shader in _workspace.GetAllShaders())
+        {
+            var parsed = _workspace.GetParsedShader(shader.Name);
+            if (parsed == null) continue;
+
+            // Check if this shader directly defines (not inherits) the method
+            if (parsed.Methods.Any(m => string.Equals(m.Name, methodName, StringComparison.OrdinalIgnoreCase)))
+            {
+                result.Add(shader.Name);
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Search ALL indexed shaders to find which ones define a stream variable with the given name.
+    /// Streams are typically what's accessed via streams.X syntax.
+    /// </summary>
+    public List<string> FindShadersDefiningStream(string streamName)
+    {
+        var result = new List<string>();
+
+        foreach (var shader in _workspace.GetAllShaders())
+        {
+            var parsed = _workspace.GetParsedShader(shader.Name);
+            if (parsed == null) continue;
+
+            // Check if this shader directly defines a stream variable
+            if (parsed.Variables.Any(v =>
+                string.Equals(v.Name, streamName, StringComparison.OrdinalIgnoreCase) && v.IsStream))
+            {
+                result.Add(shader.Name);
+            }
+        }
+
+        return result;
+    }
 }

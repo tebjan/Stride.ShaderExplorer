@@ -22,7 +22,7 @@ shader MaterialShader : MaterialSurfacePixelStageCompositor
         // Apply to streams
         streams.matDiffuse = albedo;
         streams.matSpecular = float4(1, 1, 1, 1);
-        streams.matGlossiness = 1.0 - rough;
+        streams.matGlossiness = 1.0 - roughness;
 
         base.Compute();
     }

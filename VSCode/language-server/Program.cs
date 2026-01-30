@@ -21,6 +21,8 @@ class Program
                 .WithHandler<TextDocumentSyncHandler>()
                 .WithHandler<CompletionHandler>()
                 .WithHandler<HoverHandler>()
+                .WithHandler<SignatureHelpHandler>()
+                .WithHandler<CodeActionHandler>()
                 .OnInitialize((server, request, token) =>
                 {
                     var workspace = server.Services.GetRequiredService<ShaderWorkspace>();
@@ -62,6 +64,8 @@ class Program
         services.AddSingleton<ShaderWorkspace>();
         services.AddSingleton<InheritanceResolver>();
         services.AddSingleton<CompletionService>();
+        services.AddSingleton<StrideInternalsAccessor>();
+        services.AddSingleton<SemanticValidator>();
 
         // TextDocumentSyncHandler as singleton so other handlers can access document content
         services.AddSingleton<TextDocumentSyncHandler>();

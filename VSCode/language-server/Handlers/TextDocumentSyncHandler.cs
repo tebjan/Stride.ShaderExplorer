@@ -16,18 +16,25 @@ public class TextDocumentSyncHandler : TextDocumentSyncHandlerBase
     private readonly ILogger<TextDocumentSyncHandler> _logger;
     private readonly ShaderWorkspace _workspace;
     private readonly ShaderParser _parser;
+    private readonly SemanticValidator _semanticValidator;
     private readonly ILanguageServerFacade _server;
     private readonly Dictionary<DocumentUri, string> _documentContents = new();
+
+    // Debouncing: delay diagnostics until user stops typing
+    private readonly Dictionary<DocumentUri, CancellationTokenSource> _diagnosticDebounce = new();
+    private const int DiagnosticDelayMs = 500; // Wait 500ms after last keystroke
 
     public TextDocumentSyncHandler(
         ILogger<TextDocumentSyncHandler> logger,
         ShaderWorkspace workspace,
         ShaderParser parser,
+        SemanticValidator semanticValidator,
         ILanguageServerFacade server)
     {
         _logger = logger;
         _workspace = workspace;
         _parser = parser;
+        _semanticValidator = semanticValidator;
         _server = server;
     }
 
@@ -44,8 +51,10 @@ public class TextDocumentSyncHandler : TextDocumentSyncHandlerBase
         _logger.LogDebug("Document opened: {Uri}", uri);
         _documentContents[uri] = content;
 
-        // Update workspace and publish diagnostics
-        UpdateDocumentAndPublishDiagnostics(uri, content);
+        // Update workspace and publish diagnostics immediately on open
+        var path = uri.GetFileSystemPath();
+        _workspace.UpdateDocument(path, content);
+        PublishDiagnostics(uri, content);
 
         return Unit.Task;
     }
@@ -62,7 +71,38 @@ public class TextDocumentSyncHandler : TextDocumentSyncHandlerBase
 
         if (_documentContents.TryGetValue(uri, out var content))
         {
-            UpdateDocumentAndPublishDiagnostics(uri, content);
+            // Update workspace immediately (for completions/hover to work)
+            var path = uri.GetFileSystemPath();
+            _workspace.UpdateDocument(path, content);
+
+            // Debounce diagnostics - cancel any pending update for this document
+            if (_diagnosticDebounce.TryGetValue(uri, out var existingCts))
+            {
+                existingCts.Cancel();
+                existingCts.Dispose();
+            }
+
+            // Schedule new diagnostic update after delay
+            var cts = new CancellationTokenSource();
+            _diagnosticDebounce[uri] = cts;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(DiagnosticDelayMs, cts.Token);
+
+                    // Only publish if not cancelled
+                    if (!cts.Token.IsCancellationRequested)
+                    {
+                        PublishDiagnostics(uri, content);
+                    }
+                }
+                catch (TaskCanceledException)
+                {
+                    // Expected when user types again before delay expires
+                }
+            }, cts.Token);
         }
 
         return Unit.Task;
@@ -79,6 +119,15 @@ public class TextDocumentSyncHandler : TextDocumentSyncHandlerBase
         var uri = request.TextDocument.Uri;
         _logger.LogDebug("Document closed: {Uri}", uri);
         _documentContents.Remove(uri);
+
+        // Clean up any pending diagnostic update
+        if (_diagnosticDebounce.TryGetValue(uri, out var cts))
+        {
+            cts.Cancel();
+            cts.Dispose();
+            _diagnosticDebounce.Remove(uri);
+        }
+
         return Unit.Task;
     }
 
@@ -87,41 +136,58 @@ public class TextDocumentSyncHandler : TextDocumentSyncHandlerBase
         return _documentContents.TryGetValue(uri, out var content) ? content : null;
     }
 
-    private void UpdateDocumentAndPublishDiagnostics(DocumentUri uri, string content)
+    /// <summary>
+    /// Publish diagnostics for a document. Called after debounce delay.
+    /// </summary>
+    private void PublishDiagnostics(DocumentUri uri, string content)
     {
         var path = uri.GetFileSystemPath();
-        var name = Path.GetFileNameWithoutExtension(path);
-
-        _workspace.UpdateDocument(path, content);
-
-        // Try to parse and get diagnostics
-        var diagnostics = new List<Diagnostic>();
 
         try
         {
-            var parsed = _workspace.GetParsedShader(name);
-            if (parsed == null)
+            // Re-parse to get fresh diagnostics
+            var result = _workspace.UpdateDocumentWithDiagnostics(path, content);
+            var allDiagnostics = new List<Diagnostic>(result.Diagnostics);
+
+            // Run semantic validation if we have a parsed shader
+            if (result.Shader != null && !result.IsPartial)
             {
-                // Parse error - add a general diagnostic
-                diagnostics.Add(new Diagnostic
-                {
-                    Range = new OmniSharp.Extensions.LanguageServer.Protocol.Models.Range(0, 0, 0, 1),
-                    Severity = DiagnosticSeverity.Error,
-                    Source = "sdsl",
-                    Message = "Failed to parse shader. Check syntax."
-                });
+                var semanticDiagnostics = _semanticValidator.Validate(result.Shader, content);
+                allDiagnostics.AddRange(semanticDiagnostics);
+            }
+
+            // Publish diagnostics
+            _server.TextDocument.PublishDiagnostics(new PublishDiagnosticsParams
+            {
+                Uri = uri,
+                Diagnostics = allDiagnostics
+            });
+
+            if (allDiagnostics.Count > 0)
+            {
+                _logger.LogDebug("Published {Count} diagnostics for {Uri}", allDiagnostics.Count, uri);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error parsing document {Uri}", uri);
-        }
+            _logger.LogError(ex, "Error publishing diagnostics for {Uri}", uri);
 
-        _server.TextDocument.PublishDiagnostics(new PublishDiagnosticsParams
-        {
-            Uri = uri,
-            Diagnostics = diagnostics
-        });
+            // Publish exception as diagnostic
+            _server.TextDocument.PublishDiagnostics(new PublishDiagnosticsParams
+            {
+                Uri = uri,
+                Diagnostics = new List<Diagnostic>
+                {
+                    new Diagnostic
+                    {
+                        Range = new OmniSharp.Extensions.LanguageServer.Protocol.Models.Range(0, 0, 0, 1),
+                        Severity = DiagnosticSeverity.Error,
+                        Source = "sdsl",
+                        Message = $"Parse error: {ex.Message}"
+                    }
+                }
+            });
+        }
     }
 
     protected override TextDocumentSyncRegistrationOptions CreateRegistrationOptions(

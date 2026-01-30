@@ -2,6 +2,7 @@
   "name": "stride-shader-tools",
   "displayName": "Stride Shader Tools",
   "description": "IntelliSense, debugging, and AI assistance for Stride SDSL shaders",
+  "icon": "icons/icon.png",
   "version": "0.1.0",
   "publisher": "stride-community",
   "engines": {

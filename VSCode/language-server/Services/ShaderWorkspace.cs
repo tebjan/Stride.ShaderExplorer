@@ -13,6 +13,8 @@ public class ShaderWorkspace
     private readonly List<string> _shaderSearchPaths = new();
     private readonly Dictionary<string, ShaderInfo> _shadersByName = new();
     private readonly Dictionary<string, ShaderInfo> _shadersByPath = new();
+    private readonly Dictionary<string, ParsedShader> _lastValidParse = new();
+    private readonly List<PathDisplayRule> _pathDisplayRules = new();
     private readonly object _lock = new();
 
     public event EventHandler? IndexingComplete;
@@ -118,7 +120,8 @@ public class ShaderWorkspace
             try
             {
                 var name = Path.GetFileNameWithoutExtension(file);
-                var info = new ShaderInfo(name, file);
+                var displayPath = GetDisplayPath(file);
+                var info = new ShaderInfo(name, file, displayPath);
 
                 lock (_lock)
                 {
@@ -201,6 +204,15 @@ public class ShaderWorkspace
             {
                 var sourceCode = File.ReadAllText(info.FilePath);
                 info.Parsed = _parser.TryParse(info.Name, sourceCode);
+
+                // Cache successful parse
+                if (info.Parsed != null && !info.Parsed.IsPartial)
+                {
+                    lock (_lock)
+                    {
+                        _lastValidParse[info.Name] = info.Parsed;
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -208,10 +220,27 @@ public class ShaderWorkspace
             }
         }
 
-        return info.Parsed;
+        // If we have a parsed result, return it
+        if (info.Parsed != null)
+            return info.Parsed;
+
+        // Fall back to last valid parse
+        lock (_lock)
+        {
+            if (_lastValidParse.TryGetValue(info.Name, out var cached))
+            {
+                _logger.LogDebug("Using cached parse for {Shader} (current has errors)", info.Name);
+                return cached;
+            }
+        }
+
+        return null;
     }
 
-    public void UpdateDocument(string path, string content)
+    /// <summary>
+    /// Update document and return parse result with diagnostics.
+    /// </summary>
+    public ShaderParseResult UpdateDocumentWithDiagnostics(string path, string content)
     {
         var name = Path.GetFileNameWithoutExtension(path);
 
@@ -219,15 +248,42 @@ public class ShaderWorkspace
         {
             if (!_shadersByPath.TryGetValue(path, out var info))
             {
-                info = new ShaderInfo(name, path);
+                var displayPath = GetDisplayPath(path);
+                info = new ShaderInfo(name, path, displayPath);
                 _shadersByName[name] = info;
                 _shadersByPath[path] = info;
             }
 
             // Re-parse with new content
             _parser.InvalidateCache(name);
-            info.Parsed = _parser.TryParse(name, content);
+            var result = _parser.TryParseWithDiagnostics(name, content);
+
+            // Update shader info
+            info.Parsed = result.Shader;
+
+            // Cache successful non-partial parses
+            if (result.Shader != null && !result.IsPartial)
+            {
+                _lastValidParse[name] = result.Shader;
+            }
+            // If parse failed but we have a partial result, still use it
+            else if (result.Shader == null && _lastValidParse.TryGetValue(name, out var cached))
+            {
+                // Keep the last valid parse available but don't overwrite info.Parsed
+                // so diagnostics still show current errors
+                _logger.LogDebug("Parse failed for {Shader}, last valid parse still available", name);
+            }
+
+            return result;
         }
+    }
+
+    /// <summary>
+    /// Legacy method - updates document without returning diagnostics.
+    /// </summary>
+    public void UpdateDocument(string path, string content)
+    {
+        UpdateDocumentWithDiagnostics(path, content);
     }
 
     #region Path Discovery
@@ -262,6 +318,8 @@ public class ShaderWorkspace
 
             foreach (var package in stridePackages)
             {
+                var packageName = Path.GetFileName(package);
+
                 // Get the latest version
                 var versionDir = Directory.GetDirectories(package)
                     .OrderByDescending(d => d)
@@ -269,6 +327,9 @@ public class ShaderWorkspace
 
                 if (versionDir != null)
                 {
+                    var version = Path.GetFileName(versionDir);
+                    var displayPrefix = $"{packageName}@{version}";
+
                     // Stride shaders are in stride\Assets\ with various subdirectories
                     // (ComputeEffect, Core, Materials, Lights, Shaders, etc.)
                     // So we add the Assets folder itself and search recursively
@@ -277,6 +338,7 @@ public class ShaderWorkspace
                     {
                         _logger.LogInformation("Found Assets at: {Path}", assetsPath);
                         paths.Add(assetsPath);
+                        AddPathDisplayRule(assetsPath, displayPrefix);
                     }
 
                     // Also check contentFiles locations
@@ -285,6 +347,7 @@ public class ShaderWorkspace
                     {
                         _logger.LogInformation("Found Assets at: {Path}", assetsPath);
                         paths.Add(assetsPath);
+                        AddPathDisplayRule(assetsPath, displayPrefix);
                     }
 
                     assetsPath = Path.Combine(versionDir, "contentFiles", "any", "net6.0", "stride", "Assets");
@@ -292,6 +355,7 @@ public class ShaderWorkspace
                     {
                         _logger.LogInformation("Found Assets at: {Path}", assetsPath);
                         paths.Add(assetsPath);
+                        AddPathDisplayRule(assetsPath, displayPrefix);
                     }
                 }
             }
@@ -302,6 +366,48 @@ public class ShaderWorkspace
         }
 
         return paths;
+    }
+
+    private void AddPathDisplayRule(string fullPath, string displayPrefix)
+    {
+        lock (_lock)
+        {
+            _pathDisplayRules.Add(new PathDisplayRule(fullPath, displayPrefix));
+            _logger.LogDebug("Added display rule: {FullPath} -> {DisplayPrefix}", fullPath, displayPrefix);
+        }
+    }
+
+    /// <summary>
+    /// Convert a full file path to a user-friendly display path.
+    /// </summary>
+    public string GetDisplayPath(string fullPath)
+    {
+        lock (_lock)
+        {
+            // Try to match against known rules (longest match wins)
+            var matchingRule = _pathDisplayRules
+                .Where(r => fullPath.StartsWith(r.FullPathPrefix, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(r => r.FullPathPrefix.Length)
+                .FirstOrDefault();
+
+            if (matchingRule != null)
+            {
+                var relativePart = fullPath.Substring(matchingRule.FullPathPrefix.Length).TrimStart('\\', '/');
+                return $"{matchingRule.DisplayPrefix}/{relativePart.Replace('\\', '/')}";
+            }
+
+            // For workspace files, show relative to workspace
+            foreach (var workspace in _workspaceFolders)
+            {
+                if (fullPath.StartsWith(workspace, StringComparison.OrdinalIgnoreCase))
+                {
+                    return fullPath.Substring(workspace.Length).TrimStart('\\', '/').Replace('\\', '/');
+                }
+            }
+
+            // Fallback: just show filename
+            return Path.GetFileName(fullPath);
+        }
     }
 
     private List<string> DiscoverVvvvPaths()
@@ -332,6 +438,7 @@ public class ShaderWorkspace
                 return paths;
             }
 
+            var vvvvVersion = Path.GetFileName(latestGammaDir); // e.g., "vvvv_gamma_6.8"
             _logger.LogInformation("Using vvvv installation: {Path}", latestGammaDir);
 
             // Check packs directory
@@ -353,12 +460,16 @@ public class ShaderWorkspace
 
                 foreach (var package in stridePackages)
                 {
+                    var packageName = Path.GetFileName(package);
+                    var displayPrefix = $"{vvvvVersion}/{packageName}";
+
                     // Search the entire Assets directory (shaders are in various subdirectories)
                     var assetsPath = Path.Combine(package, "stride", "Assets");
                     if (Directory.Exists(assetsPath))
                     {
                         _logger.LogInformation("Found Assets at: {Path}", assetsPath);
                         paths.Add(assetsPath);
+                        AddPathDisplayRule(assetsPath, displayPrefix);
                     }
                 }
             }
@@ -378,15 +489,32 @@ public class ShaderWorkspace
     #endregion
 }
 
+/// <summary>
+/// Represents path replacement rules for display paths.
+/// </summary>
+public class PathDisplayRule
+{
+    public string FullPathPrefix { get; }
+    public string DisplayPrefix { get; }
+
+    public PathDisplayRule(string fullPathPrefix, string displayPrefix)
+    {
+        FullPathPrefix = fullPathPrefix;
+        DisplayPrefix = displayPrefix;
+    }
+}
+
 public class ShaderInfo
 {
     public string Name { get; }
     public string FilePath { get; }
+    public string DisplayPath { get; }
     public ParsedShader? Parsed { get; set; }
 
-    public ShaderInfo(string name, string filePath)
+    public ShaderInfo(string name, string filePath, string displayPath)
     {
         Name = name;
         FilePath = filePath;
+        DisplayPath = displayPath;
     }
 }
