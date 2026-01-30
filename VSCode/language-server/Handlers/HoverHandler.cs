@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using OmniSharp.Extensions.LanguageServer.Protocol.Client.Capabilities;
@@ -23,6 +24,22 @@ public class HoverHandler : HoverHandlerBase
         @"Color[34]?|float|double|half|int|uint|dword|bool|" +
         @"SamplerState|SamplerComparisonState|Texture\w*)\s+(\w+)\s*(=|;|,|\))",
         RegexOptions.Compiled);
+
+    // Cache for dynamically constructed regex patterns (variable name -> compiled regex)
+    private static readonly ConcurrentDictionary<string, Regex> VarDeclPatternCache = new();
+    private static readonly ConcurrentDictionary<string, Regex> ParamPatternCache = new();
+
+    private static Regex GetVarDeclPattern(string varName)
+    {
+        return VarDeclPatternCache.GetOrAdd(varName,
+            name => new Regex($@"\b(\w+)\s+{Regex.Escape(name)}\s*[=;,\)]", RegexOptions.Compiled));
+    }
+
+    private static Regex GetParamPattern(string varName)
+    {
+        return ParamPatternCache.GetOrAdd(varName,
+            name => new Regex($@"\(\s*(\w+)\s+{Regex.Escape(name)}\s*[,\)]", RegexOptions.Compiled));
+    }
 
     public HoverHandler(
         ILogger<HoverHandler> logger,
@@ -474,8 +491,9 @@ public class HoverHandler : HoverHandlerBase
 
             // Simple pattern: look for "type varName" where type is followed by the variable name
             // Pattern: word boundary, type name, whitespace, exact variable name, then = or ; or , or )
-            var pattern = $@"\b(\w+)\s+{Regex.Escape(varName)}\s*[=;,\)]";
-            var match = Regex.Match(lineContent, pattern);
+            // Use cached compiled regex for better performance
+            var varDeclRegex = GetVarDeclPattern(varName);
+            var match = varDeclRegex.Match(lineContent);
 
             if (match.Success)
             {
@@ -490,8 +508,9 @@ public class HoverHandler : HoverHandlerBase
             }
 
             // Also check for method parameters: (type varName, ...) or (type varName)
-            var paramPattern = $@"\(\s*(\w+)\s+{Regex.Escape(varName)}\s*[,\)]";
-            var paramMatch = Regex.Match(lineContent, paramPattern);
+            // Use cached compiled regex
+            var paramRegex = GetParamPattern(varName);
+            var paramMatch = paramRegex.Match(lineContent);
             if (paramMatch.Success)
             {
                 var typeName = paramMatch.Groups[1].Value;

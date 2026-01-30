@@ -22,7 +22,7 @@ public class TextDocumentSyncHandler : TextDocumentSyncHandlerBase, IDisposable
 
     // Debouncing: delay diagnostics until user stops typing
     private readonly Dictionary<DocumentUri, CancellationTokenSource> _diagnosticDebounce = new();
-    private int _diagnosticDelayMs = 3000; // Default: wait 3 seconds after last keystroke
+    private int _diagnosticDelayMs = 2000; // Default: wait 2 seconds after last keystroke
 
     private bool _disposed;
 
@@ -31,7 +31,7 @@ public class TextDocumentSyncHandler : TextDocumentSyncHandlerBase, IDisposable
     /// </summary>
     public void SetDiagnosticsDelay(int delayMs)
     {
-        _diagnosticDelayMs = Math.Clamp(delayMs, 500, 10000);
+        _diagnosticDelayMs = Math.Clamp(delayMs, 100, 10000);
         _logger.LogInformation("Diagnostics delay configured to {DelayMs}ms", _diagnosticDelayMs);
     }
 

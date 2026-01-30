@@ -372,16 +372,15 @@ namespace StrideShaderExplorer
                 }
                 else
                 {
-                    var lowerFilter = _filterText.ToLower();
-                    bool matchesName = shader.Name.ToLower().Contains(lowerFilter);
+                    bool matchesName = shader.Name.Contains(_filterText, StringComparison.OrdinalIgnoreCase);
                     bool matchesMember = false;
 
                     if (_searchMode != SearchMode.FilenameOnly && shader.ParsedShader != null)
                     {
                         matchesMember = shader.ParsedShader.Variables?.Any(v =>
-                            v.Name?.Text?.ToLower().Contains(lowerFilter) == true) == true ||
+                            v.Name?.Text?.Contains(_filterText, StringComparison.OrdinalIgnoreCase) == true) == true ||
                             shader.ParsedShader.Methods?.Any(m =>
-                                m.Name?.Text?.ToLower().Contains(lowerFilter) == true) == true;
+                                m.Name?.Text?.Contains(_filterText, StringComparison.OrdinalIgnoreCase) == true) == true;
                     }
 
                     shader.IsVisible = _searchMode switch

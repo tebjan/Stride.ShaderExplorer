@@ -12,6 +12,8 @@ public class InheritanceResolver
 
     // Cache: shader name -> number of shaders that directly inherit from it
     private Dictionary<string, int>? _childCountCache;
+    // Cache: shader name -> resolved inheritance chain (base shaders in order)
+    private Dictionary<string, List<ParsedShader>>? _chainCache;
     private readonly object _cacheLock = new();
 
     public InheritanceResolver(ShaderWorkspace workspace, ILogger<InheritanceResolver> logger)
@@ -19,20 +21,26 @@ public class InheritanceResolver
         _workspace = workspace;
         _logger = logger;
 
-        // Rebuild cache when indexing completes
-        _workspace.IndexingComplete += (_, _) => InvalidateChildCountCache();
+        // Rebuild caches when indexing completes
+        _workspace.IndexingComplete += (_, _) => InvalidateCaches();
+    }
+
+    /// <summary>
+    /// Invalidates all caches (call when shaders are re-indexed).
+    /// </summary>
+    public void InvalidateCaches()
+    {
+        lock (_cacheLock)
+        {
+            _childCountCache = null;
+            _chainCache = null;
+        }
     }
 
     /// <summary>
     /// Invalidates the child count cache (call when shaders are re-indexed).
     /// </summary>
-    public void InvalidateChildCountCache()
-    {
-        lock (_cacheLock)
-        {
-            _childCountCache = null;
-        }
-    }
+    public void InvalidateChildCountCache() => InvalidateCaches();
 
     /// <summary>
     /// Gets the number of shaders that directly inherit from the given shader.
@@ -81,10 +89,38 @@ public class InheritanceResolver
     /// <summary>
     /// Resolves all base shaders recursively (transitive closure).
     /// Returns base shaders in order from immediate parent to root.
+    /// Results are cached until the next indexing cycle.
     /// </summary>
     public List<ParsedShader> ResolveInheritanceChain(string shaderName, HashSet<string>? visited = null)
     {
-        visited ??= new HashSet<string>();
+        // For top-level calls, check cache first
+        if (visited == null)
+        {
+            lock (_cacheLock)
+            {
+                _chainCache ??= new Dictionary<string, List<ParsedShader>>();
+                if (_chainCache.TryGetValue(shaderName, out var cached))
+                    return cached;
+            }
+
+            // Compute the chain
+            var chain = ResolveInheritanceChainInternal(shaderName, new HashSet<string>());
+
+            // Cache it (re-check _chainCache in case it was invalidated during computation)
+            lock (_cacheLock)
+            {
+                _chainCache ??= new Dictionary<string, List<ParsedShader>>();
+                _chainCache[shaderName] = chain;
+            }
+            return chain;
+        }
+
+        // Recursive call with existing visited set - don't use cache
+        return ResolveInheritanceChainInternal(shaderName, visited);
+    }
+
+    private List<ParsedShader> ResolveInheritanceChainInternal(string shaderName, HashSet<string> visited)
+    {
         if (visited.Contains(shaderName))
         {
             _logger.LogWarning("Circular inheritance detected for shader {ShaderName}", shaderName);
@@ -98,7 +134,7 @@ public class InheritanceResolver
         if (parsed?.BaseShaderNames == null)
             return result;
 
-        _logger.LogInformation("Resolving inheritance for {ShaderName}, base shaders: {BaseShaders}",
+        _logger.LogDebug("Resolving inheritance for {ShaderName}, base shaders: {BaseShaders}",
             shaderName, string.Join(", ", parsed.BaseShaderNames));
 
         foreach (var baseName in parsed.BaseShaderNames)
@@ -106,11 +142,11 @@ public class InheritanceResolver
             var baseParsed = _workspace.GetParsedShader(baseName);
             if (baseParsed != null)
             {
-                _logger.LogInformation("Found base shader {BaseName} with {VarCount} variables, {MethodCount} methods",
+                _logger.LogDebug("Found base shader {BaseName} with {VarCount} variables, {MethodCount} methods",
                     baseName, baseParsed.Variables.Count, baseParsed.Methods.Count);
                 result.Add(baseParsed);
                 // Recursively add base shader's bases
-                result.AddRange(ResolveInheritanceChain(baseName, visited));
+                result.AddRange(ResolveInheritanceChainInternal(baseName, visited));
             }
             else
             {

@@ -18603,7 +18603,7 @@ async function startLanguageServer(context) {
     serverOptions = createProjectServerOptions(devProjectPath);
   }
   const additionalPaths = config.get("shaderPaths") || [];
-  const diagnosticsDelay = config.get("diagnostics.delay") || 3e3;
+  const diagnosticsDelay = config.get("diagnostics.delay") || 2e3;
   const clientOptions = {
     documentSelector: [
       { scheme: "file", language: "sdsl" },

@@ -52,13 +52,43 @@ namespace Stride.ShaderParser
 
         public static List<string> ParseStringAsCommaSeparatedList(this AttributeDeclaration attr)
         {
-            return attr.Parameters
-                .Select(p => p?.Value as string)
-                .SelectMany(s => s.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
-                .Where(s => !string.IsNullOrWhiteSpace(s))
-                .Select(s => s.Trim())
-                .Distinct()
-                .ToList();
+            var result = new List<string>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var param in attr.Parameters)
+            {
+                if (param?.Value is not string s || string.IsNullOrEmpty(s))
+                    continue;
+
+                // Use Span-based iteration to avoid intermediate string allocations
+                var remaining = s.AsSpan();
+                while (!remaining.IsEmpty)
+                {
+                    var commaIndex = remaining.IndexOf(',');
+                    ReadOnlySpan<char> segment;
+
+                    if (commaIndex < 0)
+                    {
+                        segment = remaining.Trim();
+                        remaining = ReadOnlySpan<char>.Empty;
+                    }
+                    else
+                    {
+                        segment = remaining.Slice(0, commaIndex).Trim();
+                        remaining = remaining.Slice(commaIndex + 1);
+                    }
+
+                    if (segment.IsEmpty)
+                        continue;
+
+                    // Only allocate string when adding to result
+                    var str = segment.ToString();
+                    if (seen.Add(str))
+                        result.Add(str);
+                }
+            }
+
+            return result;
         }
 
         public static bool ParseBool(this AttributeDeclaration attr, int index = 0)

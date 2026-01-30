@@ -366,7 +366,7 @@ async function startLanguageServer(context: vscode.ExtensionContext): Promise<vo
 
     // Get additional shader paths from config
     const additionalPaths = config.get<string[]>('shaderPaths') || [];
-    const diagnosticsDelay = config.get<number>('diagnostics.delay') || 3000;
+    const diagnosticsDelay = config.get<number>('diagnostics.delay') || 2000;
 
     // Client options with middleware to enhance hover with clickable links
     const clientOptions: LanguageClientOptions = {

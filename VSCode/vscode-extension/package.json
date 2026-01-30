@@ -102,8 +102,8 @@
         },
         "strideShaderTools.diagnostics.delay": {
           "type": "number",
-          "default": 3000,
-          "minimum": 500,
+          "default": 2000,
+          "minimum": 100,
           "maximum": 10000,
           "description": "Delay in milliseconds before showing diagnostics after typing. Higher values reduce noise while typing incomplete code."
         }

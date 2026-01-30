@@ -9,13 +9,16 @@ public class ShaderWorkspace
 {
     private readonly ILogger<ShaderWorkspace> _logger;
     private readonly ShaderParser _parser;
-    private readonly List<string> _workspaceFolders = new();
+    private readonly HashSet<string> _workspaceFolders = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<(string Path, ShaderSource Source)> _shaderSearchPaths = new();
     private readonly Dictionary<string, ShaderInfo> _shadersByName = new();
     private readonly Dictionary<string, ShaderInfo> _shadersByPath = new();
     private readonly Dictionary<string, ParsedShader> _lastValidParse = new();
     private readonly List<PathDisplayRule> _pathDisplayRules = new();
     private readonly object _lock = new();
+
+    // Cached shader names list - invalidated when shaders are added
+    private IReadOnlyList<string>? _cachedShaderNames;
 
     public event EventHandler? IndexingComplete;
 
@@ -29,9 +32,8 @@ public class ShaderWorkspace
     {
         lock (_lock)
         {
-            if (!_workspaceFolders.Contains(path))
+            if (_workspaceFolders.Add(path))
             {
-                _workspaceFolders.Add(path);
                 _logger.LogInformation("Added workspace folder: {Path}", path);
             }
         }
@@ -130,6 +132,7 @@ public class ShaderWorkspace
                 {
                     _shadersByName[name] = info;
                     _shadersByPath[file] = info;
+                    _cachedShaderNames = null; // Invalidate cache
                 }
             }
             catch (Exception ex)
@@ -171,7 +174,8 @@ public class ShaderWorkspace
     {
         lock (_lock)
         {
-            return _shadersByName.Keys.ToList();
+            // Return cached list if available, otherwise rebuild
+            return _cachedShaderNames ??= _shadersByName.Keys.ToList();
         }
     }
 
@@ -243,6 +247,7 @@ public class ShaderWorkspace
                 info = new ShaderInfo(name, path, displayPath);
                 _shadersByName[name] = info;
                 _shadersByPath[path] = info;
+                _cachedShaderNames = null; // Invalidate cache for new shader
             }
 
             // Re-parse with new content

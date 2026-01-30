@@ -146,17 +146,16 @@ public class CompletionService
                 break;
 
             default:
-                // General completions
-                items.AddRange(GetKeywordCompletions(prefix));
-                items.AddRange(GetTypeCompletions(prefix));
-                items.AddRange(GetFunctionCompletions(prefix));
-                items.AddRange(GetShaderCompletions(prefix));
-
-                // Add members from current shader and base shaders
+                // General completions - local members always have highest priority
+                // Sort order: 0_ = local members, 1_ = inherited members, 2_ = functions, 3_ = keywords, 4_ = types, 5_ = shaders
                 if (parsed != null)
                 {
                     items.AddRange(GetMemberCompletions(parsed, prefix));
                 }
+                items.AddRange(GetFunctionCompletions(prefix));
+                items.AddRange(GetKeywordCompletions(prefix));
+                items.AddRange(GetTypeCompletions(prefix));
+                items.AddRange(GetShaderCompletions(prefix));
                 break;
         }
 
@@ -170,6 +169,14 @@ public class CompletionService
         return _workspace.GetParsedShader(name);
     }
 
+    // Sort order (lower = higher priority):
+    // 0_ = Local members (variables, methods)
+    // 1_ = Inherited members
+    // 2_ = HLSL intrinsic functions
+    // 3_ = Keywords
+    // 4_ = Types
+    // 5_ = Shaders
+
     private IEnumerable<CompletionItem> GetKeywordCompletions(string prefix)
     {
         return Keywords
@@ -180,8 +187,8 @@ public class CompletionService
                 Kind = CompletionItemKind.Keyword,
                 Detail = "Keyword",
                 // "streams" is accessed far more often than "stream" is declared
-                // Give it higher priority (lower sort value = shown first)
-                SortText = k == "streams" ? "0_streams" : "1_" + k
+                // Give it slightly higher priority within keywords
+                SortText = k == "streams" ? "3_0_streams" : "3_" + k
             });
     }
 
@@ -194,7 +201,7 @@ public class CompletionService
                 Label = t,
                 Kind = CompletionItemKind.Class,
                 Detail = "Type",
-                SortText = "2_" + t
+                SortText = "4_" + t
             });
     }
 
@@ -207,7 +214,7 @@ public class CompletionService
                 Label = f,
                 Kind = CompletionItemKind.Function,
                 Detail = "HLSL Intrinsic",
-                SortText = "3_" + f
+                SortText = "2_" + f
             });
     }
 
@@ -220,7 +227,7 @@ public class CompletionService
                 Label = s,
                 Kind = CompletionItemKind.Class,
                 Detail = "Shader",
-                SortText = "0_" + s
+                SortText = "5_" + s
             });
     }
 
@@ -354,6 +361,10 @@ public class CompletionService
         return items;
     }
 
+    /// <summary>
+    /// Gets member completions (variables and methods) from current shader and inheritance chain.
+    /// Local members always get highest priority (0_), inherited members get second priority (1_).
+    /// </summary>
     private IEnumerable<CompletionItem> GetMemberCompletions(ParsedShader parsed, string prefix)
     {
         var items = new List<CompletionItem>();
@@ -381,8 +392,9 @@ public class CompletionService
                     Label = variable.Name,
                     Kind = CompletionItemKind.Field,
                     Detail = detail,
+                    LabelDetails = isInherited ? new CompletionItemLabelDetails { Description = definedIn } : null,
                     Documentation = isInherited ? $"Inherited from {definedIn}" : $"Defined in {parsed.Name}",
-                    // Sort inherited items after local ones
+                    // Local = 0_, Inherited = 1_
                     SortText = (isInherited ? "1_" : "0_") + variable.Name
                 });
             }
@@ -407,9 +419,11 @@ public class CompletionService
                     Label = method.Name,
                     Kind = CompletionItemKind.Method,
                     Detail = signature,
+                    LabelDetails = isInherited ? new CompletionItemLabelDetails { Description = definedIn } : null,
                     Documentation = isInherited ? $"Inherited from {definedIn}" : $"Defined in {parsed.Name}",
                     InsertText = method.Name + "($0)",
                     InsertTextFormat = InsertTextFormat.Snippet,
+                    // Local = 0_, Inherited = 1_
                     SortText = (isInherited ? "1_" : "0_") + method.Name
                 });
             }
@@ -467,7 +481,7 @@ enum CompletionContext
     General,
     AfterColon,
     AfterCompose,
-    AfterBase,      // After "base." - show only base shader members
-    AfterStreams,   // After "streams." - show stream variables
+    AfterBase,        // After "base." - show only base shader members
+    AfterStreams,     // After "streams." - show stream variables
     Semantic
 }
