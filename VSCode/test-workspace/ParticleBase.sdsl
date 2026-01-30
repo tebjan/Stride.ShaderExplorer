@@ -1,0 +1,43 @@
+// Particle system base with Particle struct
+shader ParticleBase : ComputeBase
+{
+    // Particle data structure
+    struct Particle
+    {
+        float3 Position;
+        float3 Velocity;
+        float4 Color;
+        float Size;
+        float Life;
+        float MaxLife;
+        uint Flags;
+    };
+
+    // Physics constants
+    stage float3 Gravity = float3(0, -9.81, 0);
+    stage uint MaxParticles = 65536;
+
+    // Particle buffer
+    RWStructuredBuffer<Particle> ParticleBuffer;
+
+    // Check if particle is alive
+    bool IsAlive(Particle p)
+    {
+        return p.Life > 0.0f;
+    }
+
+    // Get normalized lifetime (0 = born, 1 = dead)
+    float GetNormalizedAge(Particle p)
+    {
+        return 1.0f - (p.Life / max(p.MaxLife, 0.001f));
+    }
+
+    // Apply basic physics to particle
+    Particle ApplyPhysics(Particle p)
+    {
+        p.Velocity += Gravity * DeltaTime;
+        p.Position += p.Velocity * DeltaTime;
+        p.Life -= DeltaTime;
+        return p;
+    }
+};

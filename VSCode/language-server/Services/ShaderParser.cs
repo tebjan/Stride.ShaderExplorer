@@ -650,11 +650,170 @@ public class ShaderVariable
     public ShaderVariable(Variable variable)
     {
         Name = variable.Name.Text;
-        TypeName = variable.Type?.Name?.Text ?? "unknown";
+        TypeName = GetFullTypeName(variable);
         IsStage = variable.Qualifiers.Contains(StrideStorageQualifier.Stage);
         IsStream = variable.Qualifiers.Contains(StrideStorageQualifier.Stream);
         IsCompose = variable.Qualifiers.Contains(StrideStorageQualifier.Compose);
         Location = variable.Span;
+    }
+
+    /// <summary>
+    /// Get the full type name including array brackets if applicable.
+    /// Arrays in SDSL can be declared as "Type name[]" and the parser stores
+    /// array information separately from the base type name.
+    /// Stride's parser may use "$array" as a special type marker for array types.
+    /// </summary>
+    private static string GetFullTypeName(Variable variable)
+    {
+        var baseType = variable.Type?.Name?.Text ?? "unknown";
+
+        try
+        {
+            var typeObj = variable.Type;
+
+            // Handle Stride's special $array type marker
+            // When the base type is "$array", we need to find the actual element type
+            if (baseType == "$array" && typeObj != null)
+            {
+                // Try to get the actual element type from the Type object
+                // Stride stores array element type in various places depending on version
+
+                // Try TypeInference property
+                var typeInferenceProperty = typeObj.GetType().GetProperty("TypeInference");
+                if (typeInferenceProperty != null)
+                {
+                    var typeInference = typeInferenceProperty.GetValue(typeObj);
+                    if (typeInference != null)
+                    {
+                        var targetTypeProp = typeInference.GetType().GetProperty("TargetType");
+                        if (targetTypeProp != null)
+                        {
+                            var targetType = targetTypeProp.GetValue(typeInference);
+                            if (targetType != null)
+                            {
+                                var nameProp = targetType.GetType().GetProperty("Name");
+                                if (nameProp != null)
+                                {
+                                    var nameObj = nameProp.GetValue(targetType);
+                                    var textProp = nameObj?.GetType().GetProperty("Text");
+                                    if (textProp != null)
+                                    {
+                                        var text = textProp.GetValue(nameObj) as string;
+                                        if (!string.IsNullOrEmpty(text) && text != "$array")
+                                        {
+                                            return text + "[]";
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Try Parameters property (for generic/template types)
+                var paramsProperty = typeObj.GetType().GetProperty("Parameters");
+                if (paramsProperty != null)
+                {
+                    var parameters = paramsProperty.GetValue(typeObj) as System.Collections.IList;
+                    if (parameters != null && parameters.Count > 0)
+                    {
+                        var firstParam = parameters[0];
+                        if (firstParam != null)
+                        {
+                            var paramNameProp = firstParam.GetType().GetProperty("Name");
+                            if (paramNameProp != null)
+                            {
+                                var paramNameObj = paramNameProp.GetValue(firstParam);
+                                var textProp = paramNameObj?.GetType().GetProperty("Text");
+                                if (textProp != null)
+                                {
+                                    var text = textProp.GetValue(paramNameObj) as string;
+                                    if (!string.IsNullOrEmpty(text))
+                                    {
+                                        return text + "[]";
+                                    }
+                                }
+                            }
+                            // Try ToString on the parameter
+                            var paramStr = firstParam.ToString();
+                            if (!string.IsNullOrEmpty(paramStr) && paramStr != "$array")
+                            {
+                                // Clean up the string if needed
+                                paramStr = paramStr.Trim();
+                                if (!paramStr.EndsWith("[]"))
+                                    return paramStr + "[]";
+                                return paramStr;
+                            }
+                        }
+                    }
+                }
+
+                // Fallback: try ToString on the type itself
+                var typeString = typeObj.ToString();
+                if (!string.IsNullOrEmpty(typeString) && typeString != "$array")
+                {
+                    // Parse out the element type from strings like "DirectLightGroup[]" or "$array<DirectLightGroup>"
+                    if (typeString.Contains("<") && typeString.Contains(">"))
+                    {
+                        var start = typeString.IndexOf('<') + 1;
+                        var end = typeString.IndexOf('>');
+                        if (end > start)
+                        {
+                            var elementType = typeString.Substring(start, end - start).Trim();
+                            return elementType + "[]";
+                        }
+                    }
+                }
+
+                // Last resort: return unknown[]
+                return "unknown[]";
+            }
+
+            // Normal case: check if it's an array that wasn't marked with $array
+            if (typeObj != null)
+            {
+                var typeString = typeObj.ToString();
+                if (!string.IsNullOrEmpty(typeString))
+                {
+                    if (typeString.Contains("[]") && !baseType.Contains("[]"))
+                    {
+                        return baseType + "[]";
+                    }
+                    if (typeString.Contains(baseType + "[]"))
+                    {
+                        return baseType + "[]";
+                    }
+                }
+
+                // Try reflection to access ArrayDimensions if available
+                var arrayDimsProperty = typeObj.GetType().GetProperty("ArrayDimensions");
+                if (arrayDimsProperty != null)
+                {
+                    var dims = arrayDimsProperty.GetValue(typeObj);
+                    if (dims != null)
+                    {
+                        var dimsList = dims as System.Collections.IList;
+                        if (dimsList != null && dimsList.Count > 0)
+                        {
+                            return baseType + "[]";
+                        }
+                    }
+                }
+            }
+
+            // Check if the variable's Qualifiers ToString contains array info
+            var qualString = variable.Qualifiers?.ToString() ?? "";
+            if (qualString.Contains("[]"))
+            {
+                return baseType + "[]";
+            }
+        }
+        catch
+        {
+            // Ignore reflection errors, return base type
+        }
+
+        return baseType;
     }
 
     // Private constructor for partial variables

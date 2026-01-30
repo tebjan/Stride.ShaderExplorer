@@ -528,6 +528,11 @@ public class ShaderInfo
     public ShaderSource Source { get; }
     public ParsedShader? Parsed { get; set; }
 
+    /// <summary>
+    /// True if this shader is from the user's workspace (editable), false if from Stride/vvvv (read-only).
+    /// </summary>
+    public bool IsWorkspaceShader => Source == ShaderSource.Workspace;
+
     public ShaderInfo(string name, string filePath, string displayPath, ShaderSource source = ShaderSource.Stride)
     {
         Name = name;

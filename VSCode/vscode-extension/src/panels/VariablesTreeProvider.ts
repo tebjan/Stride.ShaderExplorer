@@ -9,6 +9,7 @@ export interface MemberInfo {
     line: number;
     filePath: string;
     isLocal: boolean;
+    sourceShader: string;
 }
 
 export interface MemberGroup {
@@ -24,14 +25,8 @@ export interface ShaderMembersResponse {
     methods: MemberGroup[];
 }
 
-type VariableTreeItem = MemberGroup | MemberInfo;
-
-function isMemberGroup(item: VariableTreeItem): item is MemberGroup {
-    return 'sourceShader' in item && 'members' in item;
-}
-
-export class VariablesTreeProvider implements vscode.TreeDataProvider<VariableTreeItem> {
-    private _onDidChangeTreeData = new vscode.EventEmitter<VariableTreeItem | undefined>();
+export class VariablesTreeProvider implements vscode.TreeDataProvider<MemberInfo> {
+    private _onDidChangeTreeData = new vscode.EventEmitter<MemberInfo | undefined>();
     readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
     private cachedData: ShaderMembersResponse | null = null;
@@ -48,36 +43,18 @@ export class VariablesTreeProvider implements vscode.TreeDataProvider<VariableTr
         this._onDidChangeTreeData.fire(undefined);
     }
 
-    getTreeItem(element: VariableTreeItem): vscode.TreeItem {
-        if (isMemberGroup(element)) {
-            // This is a group header (shader name)
-            const item = new vscode.TreeItem(
-                element.sourceShader,
-                vscode.TreeItemCollapsibleState.Expanded
-            );
+    getTreeItem(element: MemberInfo): vscode.TreeItem {
+        // Format: type name
+        const varLabel = `${element.type} ${element.name}`;
+        const item = new vscode.TreeItem(varLabel, vscode.TreeItemCollapsibleState.None);
 
-            // Show count in description
-            item.description = `(${element.members.length})`;
-
-            // Icon based on whether it's local or inherited
-            item.iconPath = new vscode.ThemeIcon(
-                element.isLocal ? 'symbol-class' : 'symbol-interface'
-            );
-
-            item.contextValue = 'memberGroup';
-
-            return item;
-        }
-
-        // This is a member (variable)
-        const item = new vscode.TreeItem(element.name, vscode.TreeItemCollapsibleState.None);
-
-        // Type as description
-        item.description = element.type;
+        // Always show source shader as description (right-aligned, gray)
+        item.description = element.sourceShader;
 
         // Build tooltip
         item.tooltip = new vscode.MarkdownString();
         item.tooltip.appendCodeblock(`${element.type} ${element.name}`, 'sdsl');
+        item.tooltip.appendMarkdown(`\n\nDefined in: **${element.sourceShader}**`);
         if (element.comment) {
             item.tooltip.appendMarkdown(`\n\n${element.comment}`);
         }
@@ -101,46 +78,54 @@ export class VariablesTreeProvider implements vscode.TreeDataProvider<VariableTr
         return item;
     }
 
-    async getChildren(element?: VariableTreeItem): Promise<VariableTreeItem[]> {
+    async getChildren(_element?: MemberInfo): Promise<MemberInfo[]> {
         if (!this.client) {
+            console.log('[Variables] No client available');
             return [];
         }
 
         const activeEditor = vscode.window.activeTextEditor;
         if (!activeEditor || activeEditor.document.languageId !== 'sdsl') {
+            console.log('[Variables] No active SDSL editor');
             return [];
         }
 
         const uri = activeEditor.document.uri.toString();
 
-        // Root level: return groups
-        if (!element) {
-            try {
-                if (this.currentUri !== uri || !this.cachedData) {
-                    this.currentUri = uri;
-                    this.cachedData = await this.client.sendRequest<ShaderMembersResponse>(
-                        'stride/getShaderMembers',
-                        { uri }
-                    );
-                }
-
-                // Return variable groups (sorted: local first, then inherited)
-                return this.cachedData?.variables ?? [];
-            } catch (error) {
-                console.error('Failed to get shader members:', error);
-                return [];
+        try {
+            if (this.currentUri !== uri || !this.cachedData) {
+                this.currentUri = uri;
+                console.log('[Variables] Requesting shader members for:', uri);
+                this.cachedData = await this.client.sendRequest<ShaderMembersResponse>(
+                    'stride/getShaderMembers',
+                    { uri }
+                );
+                console.log('[Variables] Response variables:', this.cachedData?.variables?.length ?? 0);
             }
-        }
 
-        // Group level: return members
-        if (isMemberGroup(element)) {
-            return element.members;
-        }
+            // Flatten all variables from groups into a single list
+            // Sort: local variables first, then inherited (alphabetically within each)
+            const allVariables: MemberInfo[] = [];
+            for (const group of this.cachedData?.variables ?? []) {
+                allVariables.push(...group.members);
+            }
 
-        return [];
+            // Sort: local first, then by name
+            allVariables.sort((a, b) => {
+                if (a.isLocal !== b.isLocal) {
+                    return a.isLocal ? -1 : 1;
+                }
+                return a.name.localeCompare(b.name);
+            });
+
+            return allVariables;
+        } catch (error) {
+            console.error('[Variables] Failed to get shader members:', error);
+            return [];
+        }
     }
 
-    getParent(_element: VariableTreeItem): vscode.ProviderResult<VariableTreeItem> {
+    getParent(_element: MemberInfo): vscode.ProviderResult<MemberInfo> {
         return null;
     }
 }

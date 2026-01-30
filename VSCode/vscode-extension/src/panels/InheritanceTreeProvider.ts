@@ -74,11 +74,13 @@ export class InheritanceTreeProvider implements vscode.TreeDataProvider<ShaderNo
 
     async getChildren(element?: ShaderNode): Promise<ShaderNode[]> {
         if (!this.client) {
+            console.log('[InheritanceTree] No client available');
             return [];
         }
 
         const activeEditor = vscode.window.activeTextEditor;
         if (!activeEditor || activeEditor.document.languageId !== 'sdsl') {
+            console.log('[InheritanceTree] No active SDSL editor');
             return [];
         }
 

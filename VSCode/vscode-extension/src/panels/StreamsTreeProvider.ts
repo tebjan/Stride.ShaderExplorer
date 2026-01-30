@@ -21,25 +21,27 @@ export class StreamsTreeProvider implements vscode.TreeDataProvider<MemberInfo> 
     }
 
     getTreeItem(element: MemberInfo): vscode.TreeItem {
-        const item = new vscode.TreeItem(element.name, vscode.TreeItemCollapsibleState.None);
+        // Format: type name  [SourceShader]
+        const streamLabel = `${element.type} ${element.name}`;
+        const item = new vscode.TreeItem(streamLabel, vscode.TreeItemCollapsibleState.None);
 
-        // Type as description
-        item.description = element.type;
+        // Show source shader as description (right-aligned)
+        item.description = element.sourceShader;
 
         // Build tooltip with source shader info
         item.tooltip = new vscode.MarkdownString();
         item.tooltip.appendCodeblock(`stream ${element.type} ${element.name}`, 'sdsl');
+        item.tooltip.appendMarkdown(`\n\nDefined in: **${element.sourceShader}**`);
         if (element.comment) {
             item.tooltip.appendMarkdown(`\n\n${element.comment}`);
         }
-        if (element.filePath) {
-            item.tooltip.appendMarkdown(`\n\n*Defined in: ${element.filePath}*`);
-        }
 
-        // Stream icon
-        item.iconPath = new vscode.ThemeIcon('symbol-property');
+        // Stream icon - different for local vs inherited
+        item.iconPath = new vscode.ThemeIcon(
+            element.isLocal ? 'symbol-property' : 'symbol-constant'
+        );
 
-        item.contextValue = 'stream';
+        item.contextValue = element.isLocal ? 'localStream' : 'inheritedStream';
 
         // Command to open file at stream location
         if (element.filePath && element.line > 0) {

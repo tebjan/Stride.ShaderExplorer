@@ -1,0 +1,48 @@
+// Compute shader for particle physics simulation
+shader ParticleSimulation : ParticleBase
+{
+    // Simulation parameters
+    stage float Damping = 0.98f;
+    stage float3 WindForce = float3(0, 0, 0);
+    stage float FloorY = -10.0f;
+    stage float Bounciness = 0.6f;
+
+    // Size over lifetime
+    stage float SizeStart = 1.0f;
+    stage float SizeEnd = 0.1f;
+
+    // Color over lifetime
+    stage float4 ColorStart = float4(1, 1, 0, 1);
+    stage float4 ColorEnd = float4(1, 0, 0, 0);
+
+    override void Compute()
+    {
+        uint id = streams.DispatchThreadId.x;
+        if (id >= MaxParticles) return;
+
+        Particle p = ParticleBuffer[id];
+        if (!IsAlive(p)) return;
+
+        // Apply forces
+        p.Velocity += (Gravity + WindForce) * DeltaTime;
+        p.Velocity *= Damping;
+        p.Position += p.Velocity * DeltaTime;
+
+        // Floor collision
+        if (p.Position.y < FloorY)
+        {
+            p.Position.y = FloorY;
+            p.Velocity.y = -p.Velocity.y * Bounciness;
+        }
+
+        // Update lifetime
+        p.Life -= DeltaTime;
+
+        // Interpolate size and color
+        float age = GetNormalizedAge(p);
+        p.Size = lerp(SizeStart, SizeEnd, age);
+        p.Color = lerp(ColorStart, ColorEnd, age);
+
+        ParticleBuffer[id] = p;
+    }
+};

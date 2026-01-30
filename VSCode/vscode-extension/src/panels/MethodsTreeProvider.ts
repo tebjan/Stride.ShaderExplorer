@@ -1,15 +1,9 @@
 import * as vscode from 'vscode';
 import type { LanguageClient } from 'vscode-languageclient/node';
-import type { MemberGroup, MemberInfo, ShaderMembersResponse } from './VariablesTreeProvider';
+import type { MemberInfo, ShaderMembersResponse } from './VariablesTreeProvider';
 
-type MethodTreeItem = MemberGroup | MemberInfo;
-
-function isMemberGroup(item: MethodTreeItem): item is MemberGroup {
-    return 'sourceShader' in item && 'members' in item;
-}
-
-export class MethodsTreeProvider implements vscode.TreeDataProvider<MethodTreeItem> {
-    private _onDidChangeTreeData = new vscode.EventEmitter<MethodTreeItem | undefined>();
+export class MethodsTreeProvider implements vscode.TreeDataProvider<MemberInfo> {
+    private _onDidChangeTreeData = new vscode.EventEmitter<MemberInfo | undefined>();
     readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
     private cachedData: ShaderMembersResponse | null = null;
@@ -26,39 +20,18 @@ export class MethodsTreeProvider implements vscode.TreeDataProvider<MethodTreeIt
         this._onDidChangeTreeData.fire(undefined);
     }
 
-    getTreeItem(element: MethodTreeItem): vscode.TreeItem {
-        if (isMemberGroup(element)) {
-            // This is a group header (shader name)
-            const item = new vscode.TreeItem(
-                element.sourceShader,
-                vscode.TreeItemCollapsibleState.Expanded
-            );
+    getTreeItem(element: MemberInfo): vscode.TreeItem {
+        // Format: returnType name(params)
+        const methodLabel = `${element.type} ${element.name}${element.signature || '()'}`;
+        const item = new vscode.TreeItem(methodLabel, vscode.TreeItemCollapsibleState.None);
 
-            // Show count in description
-            item.description = `(${element.members.length})`;
-
-            // Icon based on whether it's local or inherited
-            item.iconPath = new vscode.ThemeIcon(
-                element.isLocal ? 'symbol-class' : 'symbol-interface'
-            );
-
-            item.contextValue = 'memberGroup';
-
-            return item;
-        }
-
-        // This is a method
-        const item = new vscode.TreeItem(element.name, vscode.TreeItemCollapsibleState.None);
-
-        // Signature as description (return type)
-        item.description = element.signature || element.type;
+        // Always show source shader as description (right-aligned, gray)
+        item.description = element.sourceShader;
 
         // Build tooltip
         item.tooltip = new vscode.MarkdownString();
-        const fullSignature = element.signature
-            ? `${element.type} ${element.name}${element.signature}`
-            : `${element.type} ${element.name}()`;
-        item.tooltip.appendCodeblock(fullSignature, 'sdsl');
+        item.tooltip.appendCodeblock(methodLabel, 'sdsl');
+        item.tooltip.appendMarkdown(`\n\nDefined in: **${element.sourceShader}**`);
         if (element.comment) {
             item.tooltip.appendMarkdown(`\n\n${element.comment}`);
         }
@@ -82,7 +55,7 @@ export class MethodsTreeProvider implements vscode.TreeDataProvider<MethodTreeIt
         return item;
     }
 
-    async getChildren(element?: MethodTreeItem): Promise<MethodTreeItem[]> {
+    async getChildren(_element?: MemberInfo): Promise<MemberInfo[]> {
         if (!this.client) {
             return [];
         }
@@ -94,34 +67,38 @@ export class MethodsTreeProvider implements vscode.TreeDataProvider<MethodTreeIt
 
         const uri = activeEditor.document.uri.toString();
 
-        // Root level: return groups
-        if (!element) {
-            try {
-                if (this.currentUri !== uri || !this.cachedData) {
-                    this.currentUri = uri;
-                    this.cachedData = await this.client.sendRequest<ShaderMembersResponse>(
-                        'stride/getShaderMembers',
-                        { uri }
-                    );
-                }
-
-                // Return method groups (sorted: local first, then inherited)
-                return this.cachedData?.methods ?? [];
-            } catch (error) {
-                console.error('Failed to get shader members:', error);
-                return [];
+        try {
+            if (this.currentUri !== uri || !this.cachedData) {
+                this.currentUri = uri;
+                this.cachedData = await this.client.sendRequest<ShaderMembersResponse>(
+                    'stride/getShaderMembers',
+                    { uri }
+                );
             }
-        }
 
-        // Group level: return members
-        if (isMemberGroup(element)) {
-            return element.members;
-        }
+            // Flatten all methods from groups into a single list
+            // Sort: local methods first, then inherited (alphabetically within each)
+            const allMethods: MemberInfo[] = [];
+            for (const group of this.cachedData?.methods ?? []) {
+                allMethods.push(...group.members);
+            }
 
-        return [];
+            // Sort: local first, then by name
+            allMethods.sort((a, b) => {
+                if (a.isLocal !== b.isLocal) {
+                    return a.isLocal ? -1 : 1;
+                }
+                return a.name.localeCompare(b.name);
+            });
+
+            return allMethods;
+        } catch (error) {
+            console.error('Failed to get shader members:', error);
+            return [];
+        }
     }
 
-    getParent(_element: MethodTreeItem): vscode.ProviderResult<MethodTreeItem> {
+    getParent(_element: MemberInfo): vscode.ProviderResult<MemberInfo> {
         return null;
     }
 }

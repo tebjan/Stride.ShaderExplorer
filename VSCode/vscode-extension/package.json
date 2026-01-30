@@ -1,9 +1,9 @@
 {
-  "name": "stride-shader-tools",
-  "displayName": "Stride Shader Tools",
-  "description": "IntelliSense, debugging, and assistance for Stride SDSL shaders",
+  "name": "sdsl",
+  "displayName": "Stride SDSL Shader Tools",
+  "description": "IntelliSense, (future) debugging, and assistance for Stride and vvvv SDSL shaders",
   "icon": "icons/icon.png",
-  "version": "0.1.0",
+  "version": "0.5.0",
   "publisher": "tebjan",
   "engines": {
     "vscode": "^1.95.0"
@@ -14,11 +14,14 @@
     "Debuggers"
   ],
   "keywords": [
-    "stride",
     "sdsl",
+    "stride",
     "shader",
     "hlsl",
-    "game engine"
+    "vvvv",
+    "vl",
+    "game engine",
+    "graphics"
   ],
   "extensionDependencies": [
     "ms-dotnettools.vscode-dotnet-runtime"
@@ -139,6 +142,10 @@
         "command": "strideShaderTools.refreshPanels",
         "title": "Stride Shaders: Refresh Panels",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "strideShaderTools.openShaderLink",
+        "title": "Stride Shaders: Open Shader Link"
       }
     ]
   },

@@ -1,0 +1,48 @@
+// Compute shader for particle spawning
+shader ParticleEmitter : ParticleBase
+{
+    // Emitter parameters
+    stage float3 EmitterPosition = float3(0, 0, 0);
+    stage float3 EmitterDirection = float3(0, 1, 0);
+    stage float EmitterSpread = 0.5f;
+    stage float EmitSpeed = 5.0f;
+    stage float ParticleLifetime = 3.0f;
+    stage float InitialSize = 0.1f;
+    stage float4 InitialColor = float4(1, 1, 1, 1);
+
+    // Emission control
+    stage uint EmitCount = 0;
+    stage uint FrameNumber = 0;
+
+    // Dead particle indices for recycling
+    RWStructuredBuffer<uint> DeadIndexBuffer;
+
+    override void Compute()
+    {
+        uint id = streams.DispatchThreadId.x;
+        if (id >= EmitCount) return;
+
+        // Get recycled slot
+        uint slot = DeadIndexBuffer[id];
+        if (slot >= MaxParticles) return;
+
+        // Create unique seed
+        uint seed = FrameNumber * 65536 + id;
+
+        // Random direction within cone
+        float3 randomDir = RandomInSphere(seed);
+        float3 emitDir = normalize(EmitterDirection + randomDir * EmitterSpread);
+
+        // Spawn particle
+        Particle p;
+        p.Position = EmitterPosition;
+        p.Velocity = emitDir * EmitSpeed;
+        p.Life = ParticleLifetime;
+        p.MaxLife = ParticleLifetime;
+        p.Size = InitialSize;
+        p.Color = InitialColor;
+        p.Flags = 1;
+
+        ParticleBuffer[slot] = p;
+    }
+};

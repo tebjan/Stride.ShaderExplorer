@@ -1,0 +1,10 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Centered logo with padding (original was 105x125, now centered in 128x128) -->
+  <g transform="translate(11.5, 1.5)">
+    <path d="M3.41175 30.5046L55.2038 0L104.889 29.1649L53.0925 59.6668L3.41175 30.5046Z" fill="#569CD6"/>
+    <path d="M1.18387 60.9401V34.3657L50.9227 63.562V90.1365L1.18387 60.9401Z" fill="#4EC9B0"/>
+    <path d="M55.2613 90.1362V63.562L80.1306 48.9638L102.766 62.251L55.2613 90.1362Z" fill="#569CD6"/>
+    <path d="M105 90.1362L84.5335 78.1225L105 66.1088V90.1362Z" fill="#4EC9B0"/>
+    <path d="M52.9645 125L0 94.0908L25.0476 79.9563L53.0918 96.5785L80.1285 80.7081L104.389 94.7652L52.9645 125Z" fill="#4EC9B0"/>
+  </g>
+</svg>

@@ -1,0 +1,37 @@
+// Base compute shader with common utilities
+shader ComputeBase
+{
+    // Thread info
+    stage uint3 ThreadGroupSize = uint3(64, 1, 1);
+
+    // Time
+    stage float Time;
+    stage float DeltaTime;
+
+    // Random hash function
+    float Hash(uint seed)
+    {
+        seed = (seed ^ 61) ^ (seed >> 16);
+        seed *= 9;
+        seed = seed ^ (seed >> 4);
+        seed *= 0x27d4eb2d;
+        seed = seed ^ (seed >> 15);
+        return float(seed) / 4294967295.0f;
+    }
+
+    // Random float3 in unit sphere
+    float3 RandomInSphere(uint seed)
+    {
+        float theta = Hash(seed) * 6.28318f;
+        float phi = acos(2.0f * Hash(seed + 1) - 1.0f);
+        float r = pow(Hash(seed + 2), 0.333f);
+        return float3(
+            r * sin(phi) * cos(theta),
+            r * sin(phi) * sin(theta),
+            r * cos(phi)
+        );
+    }
+
+    // Abstract compute method
+    abstract void Compute();
+};

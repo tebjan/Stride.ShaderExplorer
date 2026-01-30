@@ -13,6 +13,11 @@ import {
     MethodsTreeProvider,
     StreamsTreeProvider,
 } from './panels';
+import {
+    ExternalShaderProvider,
+    EXTERNAL_SHADER_SCHEME,
+    createExternalShaderUri,
+} from './ExternalShaderProvider';
 
 const EXTENSION_ID = 'tebjan.stride-shader-tools';
 
@@ -38,6 +43,15 @@ interface IDotnetAcquireResult {
 export async function activate(context: vscode.ExtensionContext) {
     console.log('Stride Shader Tools is activating...');
 
+    // Register file system provider for external (read-only) shaders
+    const externalShaderProvider = new ExternalShaderProvider();
+    context.subscriptions.push(
+        vscode.workspace.registerFileSystemProvider(EXTERNAL_SHADER_SCHEME, externalShaderProvider, {
+            isReadonly: true,
+            isCaseSensitive: true,
+        })
+    );
+
     // Register commands
     context.subscriptions.push(
         vscode.commands.registerCommand('strideShaderTools.restartServer', async () => {
@@ -49,24 +63,25 @@ export async function activate(context: vscode.ExtensionContext) {
         })
     );
 
-    // Command to open a shader file (used by TreeView items)
+    // Command to open a shader file (used by TreeView items and go-to-definition)
+    // Non-workspace files (Stride/vvvv shaders) open as read-only
     context.subscriptions.push(
         vscode.commands.registerCommand('strideShaderTools.openShader', async (filePath: string, line?: number) => {
+            await openShaderFile(filePath, line);
+        })
+    );
+
+    // Command for document link clicks (direct click on shader names in code)
+    // Receives encoded args: "filePath|isWorkspaceShader"
+    context.subscriptions.push(
+        vscode.commands.registerCommand('strideShaderTools.openShaderLink', async (encodedArgs: string) => {
             try {
-                const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
-                const editor = await vscode.window.showTextDocument(doc, {
-                    viewColumn: vscode.ViewColumn.Beside,
-                    preserveFocus: true,
-                    preview: true,
-                });
-                if (line !== undefined && line > 0) {
-                    const range = new vscode.Range(line - 1, 0, line - 1, 0);
-                    editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
-                    editor.selection = new vscode.Selection(range.start, range.start);
-                }
+                const args = decodeURIComponent(encodedArgs);
+                const [filePath, isWorkspaceStr] = args.split('|');
+                const isWorkspaceShader = isWorkspaceStr === 'true' || isWorkspaceStr === 'True';
+                await openShaderFile(filePath, undefined, isWorkspaceShader);
             } catch (error) {
-                console.error('Failed to open shader:', error);
-                vscode.window.showErrorMessage(`Failed to open shader: ${filePath}`);
+                console.error('Failed to open shader link:', error);
             }
         })
     );
@@ -128,6 +143,23 @@ export async function activate(context: vscode.ExtensionContext) {
                 variablesProvider.refresh();
                 methodsProvider.refresh();
                 streamsProvider.refresh();
+            }
+        })
+    );
+
+    // Refresh panels when document content changes (e.g., after adding base shader)
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeTextDocument(event => {
+            if (event.document.languageId === 'sdsl' &&
+                event.document === vscode.window.activeTextEditor?.document) {
+                // Debounce: only refresh after user stops typing
+                clearTimeout((globalThis as any).__sdslRefreshTimeout);
+                (globalThis as any).__sdslRefreshTimeout = setTimeout(() => {
+                    inheritanceProvider.refresh();
+                    variablesProvider.refresh();
+                    methodsProvider.refresh();
+                    streamsProvider.refresh();
+                }, 500); // 500ms debounce
             }
         })
     );
@@ -358,7 +390,14 @@ async function startLanguageServer(context: vscode.ExtensionContext): Promise<vo
     } else {
         // Development: run from source (requires .NET SDK on PATH)
         const devProjectPath = path.join(context.extensionPath, '..', 'language-server');
-        console.log('Using development language server:', devProjectPath);
+        console.log('[LSP] Extension path:', context.extensionPath);
+        console.log('[LSP] Dev project path:', devProjectPath);
+        console.log('[LSP] Dev path exists:', fs.existsSync(devProjectPath));
+
+        // Verify the project file exists
+        const csprojPath = path.join(devProjectPath, 'StrideShaderLanguageServer.csproj');
+        console.log('[LSP] .csproj exists:', fs.existsSync(csprojPath));
+
         serverOptions = createProjectServerOptions(devProjectPath);
     }
 
@@ -367,7 +406,10 @@ async function startLanguageServer(context: vscode.ExtensionContext): Promise<vo
 
     // Client options with middleware to enhance hover with clickable links
     const clientOptions: LanguageClientOptions = {
-        documentSelector: [{ scheme: 'file', language: 'sdsl' }],
+        documentSelector: [
+            { scheme: 'file', language: 'sdsl' },
+            { scheme: EXTERNAL_SHADER_SCHEME, language: 'sdsl' },
+        ],
         synchronize: {
             fileEvents: vscode.workspace.createFileSystemWatcher('**/*.sdsl'),
         },
@@ -397,24 +439,31 @@ async function startLanguageServer(context: vscode.ExtensionContext): Promise<vo
     );
 
     try {
+        console.log('[LSP] Starting language client...');
         await client.start();
-        console.log('Stride Shader Language Server started successfully');
+        console.log('[LSP] Language server started successfully');
+
+        // Check if client is actually ready
+        const state = client.state;
+        console.log('[LSP] Client state after start:', state);
 
         // Set the client on all TreeView providers now that it's ready
         inheritanceProvider.setClient(client);
         variablesProvider.setClient(client);
         methodsProvider.setClient(client);
         streamsProvider.setClient(client);
+        console.log('[LSP] TreeView providers connected to client');
 
         // Initial refresh if there's an active SDSL editor
         if (vscode.window.activeTextEditor?.document.languageId === 'sdsl') {
+            console.log('[LSP] Active SDSL editor found, refreshing panels');
             inheritanceProvider.refresh();
             variablesProvider.refresh();
             methodsProvider.refresh();
             streamsProvider.refresh();
         }
     } catch (error) {
-        console.error('Failed to start language server:', error);
+        console.error('[LSP] Failed to start language server:', error);
         vscode.window.showWarningMessage(
             'Failed to start Stride Shader Language Server. IntelliSense may be limited. Check the Output panel for details.'
         );
@@ -481,6 +530,69 @@ function transformHoverWithClickableLinks(hover: vscode.Hover): vscode.Hover {
     const newContents = hover.contents.map(transformContent);
 
     return new vscode.Hover(newContents, hover.range);
+}
+
+/**
+ * Opens a shader file in the editor.
+ * Workspace shaders open as editable, external shaders (Stride/vvvv) open as read-only
+ * using a virtual file system provider.
+ *
+ * @param filePath - Path to the shader file
+ * @param line - Optional line number to navigate to (1-based)
+ * @param isWorkspaceShader - If provided, determines read-only mode. If undefined, infers from workspace folders.
+ */
+async function openShaderFile(filePath: string, line?: number, isWorkspaceShader?: boolean): Promise<void> {
+    try {
+        // Determine if this is a workspace shader
+        let isEditable = isWorkspaceShader;
+        if (isEditable === undefined) {
+            // Infer from workspace folders
+            const workspaceFolders = vscode.workspace.workspaceFolders;
+            if (workspaceFolders) {
+                isEditable = workspaceFolders.some(folder =>
+                    filePath.toLowerCase().startsWith(folder.uri.fsPath.toLowerCase())
+                );
+            } else {
+                isEditable = false;
+            }
+        }
+
+        let uri: vscode.Uri;
+        if (isEditable) {
+            // Workspace shader - use regular file URI (editable)
+            uri = vscode.Uri.file(filePath);
+        } else {
+            // External shader - use custom scheme (read-only)
+            uri = createExternalShaderUri(filePath, line);
+        }
+
+        // Open the document
+        const doc = await vscode.workspace.openTextDocument(uri);
+
+        // Show the document
+        const editor = await vscode.window.showTextDocument(doc, {
+            viewColumn: vscode.ViewColumn.Active,
+            preserveFocus: false,
+            preview: !isEditable, // Preview mode for external files (can be replaced by next navigation)
+        });
+
+        // Navigate to specific line if provided
+        if (line !== undefined && line > 0) {
+            const lineIndex = line - 1; // Convert to 0-based
+            const range = new vscode.Range(lineIndex, 0, lineIndex, 0);
+            editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+            editor.selection = new vscode.Selection(range.start, range.start);
+        }
+
+        // Show status message for external (read-only) shaders
+        if (!isEditable) {
+            const shaderName = path.basename(filePath, '.sdsl');
+            vscode.window.setStatusBarMessage(`📖 ${shaderName} (External shader - read-only)`, 5000);
+        }
+    } catch (error) {
+        console.error('Failed to open shader file:', error);
+        vscode.window.showErrorMessage(`Failed to open shader: ${filePath}`);
+    }
 }
 
 export function deactivate(): Thenable<void> | undefined {
