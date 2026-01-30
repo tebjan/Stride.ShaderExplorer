@@ -20,7 +20,15 @@ public class ShaderWorkspace
     // Cached shader names list - invalidated when shaders are added
     private IReadOnlyList<string>? _cachedShaderNames;
 
+    // Background parsing cancellation
+    private CancellationTokenSource? _backgroundParseCts;
+
     public event EventHandler? IndexingComplete;
+
+    /// <summary>
+    /// Raised when a shader file needs diagnostics published (for background parsing).
+    /// </summary>
+    public event Action<string>? RequestDiagnosticsPublish;
 
     public ShaderWorkspace(ILogger<ShaderWorkspace> logger, ShaderParser parser)
     {
@@ -144,6 +152,71 @@ public class ShaderWorkspace
         _logger.LogInformation("Indexed {Count} shaders", _shadersByName.Count);
 
         IndexingComplete?.Invoke(this, EventArgs.Empty);
+
+        // Start background parsing of workspace shaders
+        StartBackgroundParsing();
+    }
+
+    /// <summary>
+    /// Parse workspace shaders in the background so they show diagnostics without being opened.
+    /// </summary>
+    private void StartBackgroundParsing()
+    {
+        // Cancel any existing background parse
+        _backgroundParseCts?.Cancel();
+        _backgroundParseCts = new CancellationTokenSource();
+        var ct = _backgroundParseCts.Token;
+
+        // Fire-and-forget background task (discard to suppress warning)
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                // Get workspace shaders to parse
+                List<ShaderInfo> workspaceShaders;
+                lock (_lock)
+                {
+                    workspaceShaders = _shadersByName.Values
+                        .Where(s => s.Source == ShaderSource.Workspace)
+                        .ToList();
+                }
+
+                _logger.LogInformation("Background parsing {Count} workspace shaders", workspaceShaders.Count);
+
+                foreach (var shader in workspaceShaders)
+                {
+                    if (ct.IsCancellationRequested)
+                        break;
+
+                    try
+                    {
+                        // Request diagnostics for this file (which triggers parsing)
+                        RequestDiagnosticsPublish?.Invoke(shader.FilePath);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "Background parse failed for {Shader}", shader.Name);
+                    }
+                }
+
+                if (!ct.IsCancellationRequested)
+                {
+                    _logger.LogInformation("Background parsing complete");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Background parsing error");
+            }
+        }, ct);
+    }
+
+    /// <summary>
+    /// Stop background parsing (call on shutdown).
+    /// </summary>
+    public void StopBackgroundParsing()
+    {
+        _backgroundParseCts?.Cancel();
     }
 
     public ShaderInfo? GetShaderByName(string name)

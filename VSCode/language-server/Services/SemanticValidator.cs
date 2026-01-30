@@ -86,7 +86,7 @@ public class SemanticValidator
     /// <summary>
     /// Validate a parsed shader and return semantic diagnostics.
     /// </summary>
-    public List<Diagnostic> Validate(ParsedShader parsed, string sourceCode)
+    public List<Diagnostic> Validate(ParsedShader parsed, string sourceCode, string? filePath = null)
     {
         var diagnostics = new List<Diagnostic>();
 
@@ -95,6 +95,12 @@ public class SemanticValidator
 
         try
         {
+            // Validate filename matches shader name
+            if (!string.IsNullOrEmpty(filePath))
+            {
+                ValidateFilenameMatchesShaderName(parsed, sourceCode, filePath, diagnostics);
+            }
+
             // Validate base shader references
             ValidateBaseShaders(parsed, sourceCode, diagnostics);
 
@@ -116,19 +122,96 @@ public class SemanticValidator
     }
 
     /// <summary>
+    /// Validate that the filename matches the shader name.
+    /// Exception: files ending with " - Copy" or similar Windows copy patterns are only suggested to rename.
+    /// </summary>
+    private void ValidateFilenameMatchesShaderName(ParsedShader parsed, string sourceCode, string filePath, List<Diagnostic> diagnostics)
+    {
+        var fileName = Path.GetFileNameWithoutExtension(filePath);
+        var shaderName = parsed.Name;
+
+        if (string.Equals(fileName, shaderName, StringComparison.Ordinal))
+            return; // All good
+
+        // Check if this is a Windows copy pattern (e.g., "MyShader - Copy", "MyShader (2)")
+        var isCopyPattern = fileName.Contains(" - Copy", StringComparison.OrdinalIgnoreCase) ||
+                           System.Text.RegularExpressions.Regex.IsMatch(fileName, @"\s*\(\d+\)$");
+
+        // Find the shader name in the source code
+        var position = FindShaderNamePosition(sourceCode, shaderName);
+        if (!position.HasValue)
+            return;
+
+        // Simple error message - quick fix actions will offer the solutions
+        var message = $"Filename '{fileName}' doesn't match shader name '{shaderName}'";
+
+        diagnostics.Add(new Diagnostic
+        {
+            Range = new Range(
+                position.Value.line,
+                position.Value.col,
+                position.Value.line,
+                position.Value.col + shaderName.Length
+            ),
+            Severity = DiagnosticSeverity.Error,
+            Source = "sdsl",
+            Message = message,
+            Code = "shader-filename-mismatch",
+            // Store info needed by code action handler
+            Data = isCopyPattern ? "copy" : null
+        });
+    }
+
+    /// <summary>
+    /// Find the position of the shader name in the "shader Name" declaration.
+    /// </summary>
+    private static (int line, int col)? FindShaderNamePosition(string sourceCode, string shaderName)
+    {
+        var lines = sourceCode.Split('\n');
+        for (int i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i];
+
+            // Look for "shader ShaderName" pattern
+            var shaderKeywordIndex = line.IndexOf("shader", StringComparison.OrdinalIgnoreCase);
+            if (shaderKeywordIndex < 0) continue;
+
+            // Find the shader name after "shader " keyword
+            var afterKeyword = shaderKeywordIndex + "shader".Length;
+            var remaining = line.Substring(afterKeyword).TrimStart();
+            var nameStart = line.Length - remaining.Length;
+
+            // Check if the shader name is there
+            if (remaining.StartsWith(shaderName, StringComparison.Ordinal))
+            {
+                // Verify word boundary after the name (allow < for template params)
+                var afterName = shaderName.Length;
+                if (afterName >= remaining.Length ||
+                    !char.IsLetterOrDigit(remaining[afterName]) ||
+                    remaining[afterName] == '<')
+                {
+                    return (i, nameStart);
+                }
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
     /// Validate that all base shaders exist and check for redundant inheritance.
     /// </summary>
     private void ValidateBaseShaders(ParsedShader parsed, string sourceCode, List<Diagnostic> diagnostics)
     {
         // First pass: check that all base shaders exist
-        foreach (var baseName in parsed.BaseShaderNames)
+        // Use BaseShaderReferences to properly handle template arguments
+        foreach (var baseRef in parsed.BaseShaderReferences)
         {
-            // Check if we know this shader
-            var baseShader = _workspace.GetShaderByName(baseName);
+            // Use BaseName (stripped of template arguments) for lookup
+            var baseShader = _workspace.GetShaderByName(baseRef.BaseName);
             if (baseShader == null)
             {
-                // Try to find the position in source code
-                var position = FindIdentifierPosition(sourceCode, baseName);
+                // Try to find the position in source code using the full name
+                var position = FindIdentifierPosition(sourceCode, baseRef.BaseName);
                 if (position.HasValue)
                 {
                     diagnostics.Add(new Diagnostic
@@ -137,11 +220,11 @@ public class SemanticValidator
                             position.Value.line,
                             position.Value.col,
                             position.Value.line,
-                            position.Value.col + baseName.Length
+                            position.Value.col + baseRef.BaseName.Length
                         ),
                         Severity = DiagnosticSeverity.Warning,
                         Source = "sdsl",
-                        Message = $"Base shader '{baseName}' not found in workspace"
+                        Message = $"Base shader '{baseRef.BaseName}' not found in workspace"
                     });
                 }
             }
@@ -365,6 +448,13 @@ public class SemanticValidator
         foreach (var keyword in Keywords)
         {
             scope.AddVariable(keyword, "keyword");
+        }
+
+        // Add template parameters as read-only variables
+        // Template parameters like "float Intensity" are accessible within the shader
+        foreach (var templateParam in parsed.TemplateParameters)
+        {
+            scope.AddVariable(templateParam.Name, templateParam.TypeName);
         }
 
         // Add local variables and methods with their types

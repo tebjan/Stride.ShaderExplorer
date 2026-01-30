@@ -1,0 +1,10 @@
+// Test file with mismatched filename
+shader ActualShaderName : ShaderBase
+{
+    stage float TestValue = 1.0f;
+
+    override void Compute()
+    {
+        base.Compute();
+    }
+};

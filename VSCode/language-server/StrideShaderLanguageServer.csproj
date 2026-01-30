@@ -7,6 +7,8 @@
     <Nullable>enable</Nullable>
     <RootNamespace>StrideShaderLanguageServer</RootNamespace>
     <PublishDocumentationFiles>false</PublishDocumentationFiles>
+    <!-- Exclude satellite assemblies (localization folders like de/, fr/, etc.) -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
 
   <ItemGroup>

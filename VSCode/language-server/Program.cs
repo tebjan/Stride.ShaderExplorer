@@ -140,11 +140,17 @@ class Program
         }
 
         _logger?.LogInformation("Server exit complete");
+
+        // Explicitly exit the process to ensure termination
+        // This is needed because on Windows with dotnet run, the process
+        // may not terminate cleanly when VS Code closes the connection.
+        // See: https://github.com/microsoft/vscode-languageserver-node/issues/850
+        Environment.Exit(0);
     }
 
     private static InheritanceTreeResponse HandleInheritanceTreeRequest(InheritanceTreeParams request)
     {
-        _logger?.LogInformation("Getting inheritance tree for {Uri}", request.Uri);
+        _logger?.LogDebug("Getting inheritance tree for {Uri}", request.Uri);
 
         try
         {
@@ -161,14 +167,20 @@ class Program
                 return new InheritanceTreeResponse(null, new List<ShaderNode>());
             }
 
+            // Build hierarchical tree of direct base shaders
+            var visited = new HashSet<string>();
+            var directBases = BuildHierarchicalInheritance(currentParsed.BaseShaderNames, visited);
+
             var currentNode = new ShaderNode(
                 Name: currentParsed.Name,
                 FilePath: currentShaderInfo.FilePath,
                 Source: currentShaderInfo.DisplayPath,
                 Line: 1,
-                IsLocal: true
+                IsLocal: true,
+                Children: directBases
             );
 
+            // Also build flat list for backwards compatibility
             var baseShaders = new List<ShaderNode>();
             var inheritanceChain = _inheritanceResolver?.ResolveInheritanceChain(shaderName) ?? [];
 
@@ -187,7 +199,7 @@ class Program
                 }
             }
 
-            _logger?.LogInformation("Found {Count} base shaders for {ShaderName}", baseShaders.Count, shaderName);
+            _logger?.LogDebug("Found {Count} base shaders for {ShaderName}", baseShaders.Count, shaderName);
 
             return new InheritanceTreeResponse(currentNode, baseShaders);
         }
@@ -198,9 +210,48 @@ class Program
         }
     }
 
+    /// <summary>
+    /// Build a hierarchical tree of inheritance, where each shader node contains its direct bases as children.
+    /// </summary>
+    private static List<ShaderNode> BuildHierarchicalInheritance(IReadOnlyList<string> baseNames, HashSet<string> visited)
+    {
+        var result = new List<ShaderNode>();
+
+        foreach (var baseName in baseNames)
+        {
+            if (visited.Contains(baseName))
+                continue;
+            visited.Add(baseName);
+
+            var baseInfo = _workspace?.GetShaderByName(baseName);
+            var baseParsed = _workspace?.GetParsedShader(baseName);
+
+            if (baseInfo == null)
+                continue;
+
+            // Recursively get this shader's direct bases
+            List<ShaderNode>? children = null;
+            if (baseParsed != null && baseParsed.BaseShaderNames.Count > 0)
+            {
+                children = BuildHierarchicalInheritance(baseParsed.BaseShaderNames, visited);
+            }
+
+            result.Add(new ShaderNode(
+                Name: baseName,
+                FilePath: baseInfo.FilePath,
+                Source: baseInfo.DisplayPath,
+                Line: 1,
+                IsLocal: false,
+                Children: children?.Count > 0 ? children : null
+            ));
+        }
+
+        return result;
+    }
+
     private static ShaderMembersResponse HandleShaderMembersRequest(ShaderMembersParams request)
     {
-        _logger?.LogInformation("Getting shader members for {Uri}", request.Uri);
+        _logger?.LogDebug("Getting shader members for {Uri}", request.Uri);
 
         try
         {
@@ -213,12 +264,13 @@ class Program
             if (currentParsed == null)
             {
                 _logger?.LogWarning("Shader not found: {ShaderName} (path: {Path})", shaderName, path);
-                return new ShaderMembersResponse([], [], []);
+                return new ShaderMembersResponse([], [], [], []);
             }
 
             var streams = new List<MemberInfo>();
             var variableGroups = new Dictionary<string, List<MemberInfo>>();
             var methodGroups = new Dictionary<string, List<MemberInfo>>();
+            var compositions = new List<CompositionInfo>();
 
             // Process all variables
             foreach (var (variable, definedIn) in _inheritanceResolver?.GetAllVariables(currentParsed) ?? [])
@@ -313,15 +365,32 @@ class Program
                 })
                 .ToList();
 
-            _logger?.LogInformation("Found {StreamCount} streams, {VarGroups} variable groups, {MethodGroups} method groups",
-                streams.Count, variables.Count, methods.Count);
+            // Process compositions
+            foreach (var (composition, definedIn) in _inheritanceResolver?.GetAllCompositions(currentParsed) ?? [])
+            {
+                var shaderInfo = _workspace?.GetShaderByName(definedIn);
+                var filePath = shaderInfo?.FilePath ?? "";
+                var isLocal = definedIn == shaderName;
 
-            return new ShaderMembersResponse(streams, variables, methods);
+                compositions.Add(new CompositionInfo(
+                    Name: composition.Name,
+                    Type: composition.TypeName,
+                    Line: composition.Location.Location.Line,
+                    FilePath: filePath,
+                    IsLocal: isLocal,
+                    SourceShader: definedIn
+                ));
+            }
+
+            _logger?.LogDebug("Found {StreamCount} streams, {VarGroups} variable groups, {MethodGroups} method groups, {CompCount} compositions",
+                streams.Count, variables.Count, methods.Count, compositions.Count);
+
+            return new ShaderMembersResponse(streams, variables, methods, compositions);
         }
         catch (Exception ex)
         {
             _logger?.LogError(ex, "Error getting shader members");
-            return new ShaderMembersResponse([], [], []);
+            return new ShaderMembersResponse([], [], [], []);
         }
     }
 

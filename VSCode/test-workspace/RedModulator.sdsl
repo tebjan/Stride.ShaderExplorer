@@ -1,0 +1,11 @@
+// Shader that instantiates a template shader
+// Inherits from ColorModulator with Intensity = 0.5
+shader RedModulator : ColorModulator<0.5f>
+{
+    override void Compute()
+    {
+        // BaseColor is inherited from ColorModulator
+        BaseColor = float4(1, 0, 0, 1);
+        base.Compute();
+    }
+};

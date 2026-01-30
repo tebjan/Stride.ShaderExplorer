@@ -1,0 +1,19 @@
+// Template shader demonstrating SDSL template parameters
+// Templates allow compile-time parameterization of shaders
+
+shader ColorModulator<float Intensity> : ComputeBase
+{
+    // Template parameter Intensity is accessible as a read-only variable
+    stage float4 BaseColor = float4(1, 1, 1, 1);
+
+    float4 Modulate(float4 color)
+    {
+        // Use template parameter - read-only, compile-time substituted
+        return color * Intensity;
+    }
+
+    override void Compute()
+    {
+        float4 result = Modulate(BaseColor);
+    }
+};

@@ -50,9 +50,15 @@ public class ShaderParser
     private readonly object _cacheLock = new();
 
     // Regex patterns for fallback parsing
+    // Updated to capture template parameters: shader Name<type Param> : Base
     private static readonly Regex ShaderDeclRegex = new(
-        @"shader\s+(\w+)\s*(?::\s*([\w\s,<>]+?))?(?:\s*\{|$)",
+        @"shader\s+(\w+)\s*(?:<([^>]+)>)?\s*(?::\s*([\w\s,.<>]+?))?(?:\s*\{|$)",
         RegexOptions.Compiled | RegexOptions.Multiline);
+
+    // Regex to parse template parameter declarations: "type name, type name"
+    private static readonly Regex TemplateParamRegex = new(
+        @"(float[234]?|int[234]?|uint[234]?|bool|Texture[123]D|TextureCube|SamplerState|Semantic|LinkType)\s+(\w+)",
+        RegexOptions.Compiled);
     private static readonly Regex VariableDeclRegex = new(
         @"(?:stage\s+|stream\s+|compose\s+)*(\w+(?:<[^>]+>)?)\s+(\w+)\s*[;=]",
         RegexOptions.Compiled);
@@ -102,7 +108,11 @@ public class ShaderParser
             var shaderClass = parsingResult.Shader?.GetFirstClassDecl();
             if (shaderClass != null)
             {
-                result.Shader = new ParsedShader(shaderName, parsingResult.Shader!, shaderClass);
+                // Extract template parameters from source code using regex
+                // (AST-based extraction via reflection is unreliable)
+                var templateParams = ExtractTemplateParametersFromSource(sourceCode);
+
+                result.Shader = new ParsedShader(shaderName, parsingResult.Shader!, shaderClass, templateParams);
                 result.IsPartial = parsingResult.HasErrors;
 
                 if (parsingResult.HasErrors)
@@ -471,6 +481,36 @@ public class ShaderParser
     }
 
     /// <summary>
+    /// Extract template parameters from source code using regex.
+    /// Matches "shader Name<type Param, type Param>" pattern.
+    /// </summary>
+    private List<TemplateParameter> ExtractTemplateParametersFromSource(string source)
+    {
+        var result = new List<TemplateParameter>();
+
+        var match = ShaderDeclRegex.Match(source);
+        if (!match.Success || !match.Groups[2].Success)
+            return result;
+
+        var templateParamsString = match.Groups[2].Value;
+        if (string.IsNullOrWhiteSpace(templateParamsString))
+            return result;
+
+        foreach (Match paramMatch in TemplateParamRegex.Matches(templateParamsString))
+        {
+            result.Add(new TemplateParameter(
+                paramMatch.Groups[2].Value,  // name
+                paramMatch.Groups[1].Value   // type
+            ));
+        }
+
+        _logger.LogDebug("Extracted {Count} template parameters from source: {Params}",
+            result.Count, string.Join(", ", result.Select(p => p.ToString())));
+
+        return result;
+    }
+
+    /// <summary>
     /// Fallback: Extract basic shader structure using regex when AST parsing fails.
     /// </summary>
     private ParsedShader? TryExtractShaderStructure(string name, string source)
@@ -480,14 +520,27 @@ public class ShaderParser
             return null;
 
         var shaderName = match.Groups[1].Value;
-        var basesString = match.Groups[2].Success ? match.Groups[2].Value : "";
+
+        // Group 2: Template parameters (optional): <float Intensity, int Size>
+        var templateParamsString = match.Groups[2].Success ? match.Groups[2].Value : "";
+        var templateParams = new List<TemplateParameter>();
+        if (!string.IsNullOrWhiteSpace(templateParamsString))
+        {
+            foreach (Match paramMatch in TemplateParamRegex.Matches(templateParamsString))
+            {
+                templateParams.Add(new TemplateParameter(
+                    paramMatch.Groups[2].Value,  // name
+                    paramMatch.Groups[1].Value   // type
+                ));
+            }
+        }
+
+        // Group 3: Base shaders (optional): BaseShader<1.0f>, OtherBase
+        var basesString = match.Groups[3].Success ? match.Groups[3].Value : "";
 
         var baseNames = string.IsNullOrWhiteSpace(basesString)
             ? new List<string>()
-            : basesString.Split(',')
-                .Select(s => s.Trim())
-                .Where(s => !string.IsNullOrEmpty(s))
-                .ToList();
+            : ParseBaseShaderList(basesString);
 
         // Try to extract variables and methods with regex
         var variables = new List<RegexExtractedVariable>();
@@ -511,10 +564,42 @@ public class ShaderParser
             });
         }
 
-        _logger.LogDebug("Regex fallback extracted: {VarCount} variables, {MethodCount} methods",
-            variables.Count, methods.Count);
+        _logger.LogDebug("Regex fallback extracted: {VarCount} variables, {MethodCount} methods, {TemplateCount} template params",
+            variables.Count, methods.Count, templateParams.Count);
 
-        return ParsedShader.CreatePartial(name, baseNames, variables, methods);
+        return ParsedShader.CreatePartial(name, baseNames, variables, methods, templateParams);
+    }
+
+    /// <summary>
+    /// Parse a comma-separated list of base shaders, handling template arguments.
+    /// Example: "ColorModulator<1.0f>, Texturing, OtherShader<A, B>"
+    /// </summary>
+    private static List<string> ParseBaseShaderList(string basesString)
+    {
+        var result = new List<string>();
+        var depth = 0;
+        var current = new System.Text.StringBuilder();
+
+        foreach (var c in basesString)
+        {
+            if (c == '<') depth++;
+            else if (c == '>') depth--;
+            else if (c == ',' && depth == 0)
+            {
+                var name = current.ToString().Trim();
+                if (!string.IsNullOrEmpty(name))
+                    result.Add(name);
+                current.Clear();
+                continue;
+            }
+            current.Append(c);
+        }
+
+        var lastName = current.ToString().Trim();
+        if (!string.IsNullOrEmpty(lastName))
+            result.Add(lastName);
+
+        return result;
     }
 
     public void InvalidateCache(string? shaderName = null)
@@ -560,6 +645,81 @@ public class RegexExtractedMethod
 }
 
 /// <summary>
+/// Represents a template parameter in a shader declaration.
+/// Example: shader MyShader<float Intensity, Texture2D Tex>
+/// </summary>
+public class TemplateParameter
+{
+    public string Name { get; }
+    public string TypeName { get; }
+
+    public TemplateParameter(string name, string typeName)
+    {
+        Name = name;
+        TypeName = typeName;
+    }
+
+    public override string ToString() => $"{TypeName} {Name}";
+}
+
+/// <summary>
+/// Represents template arguments in a base shader reference.
+/// Example: ColorModulator<0.5f> has BaseName="ColorModulator", Arguments=["0.5f"]
+/// </summary>
+public class BaseShaderReference
+{
+    public string FullName { get; }
+    public string BaseName { get; }
+    public IReadOnlyList<string> TemplateArguments { get; }
+    public bool HasTemplateArguments => TemplateArguments.Count > 0;
+
+    public BaseShaderReference(string fullName)
+    {
+        FullName = fullName;
+        // Parse "ShaderName<arg1, arg2>" into BaseName and Arguments
+        var angleIndex = fullName.IndexOf('<');
+        if (angleIndex > 0 && fullName.EndsWith(">"))
+        {
+            BaseName = fullName.Substring(0, angleIndex);
+            var argsStr = fullName.Substring(angleIndex + 1, fullName.Length - angleIndex - 2);
+            TemplateArguments = ParseTemplateArguments(argsStr);
+        }
+        else
+        {
+            BaseName = fullName;
+            TemplateArguments = new List<string>();
+        }
+    }
+
+    private static List<string> ParseTemplateArguments(string argsStr)
+    {
+        // Simple parsing - split by comma, but handle nested angle brackets
+        var args = new List<string>();
+        var depth = 0;
+        var current = new System.Text.StringBuilder();
+
+        foreach (var c in argsStr)
+        {
+            if (c == '<') depth++;
+            else if (c == '>') depth--;
+            else if (c == ',' && depth == 0)
+            {
+                args.Add(current.ToString().Trim());
+                current.Clear();
+                continue;
+            }
+            current.Append(c);
+        }
+        if (current.Length > 0)
+            args.Add(current.ToString().Trim());
+
+        return args;
+    }
+
+    public override string ToString() => FullName;
+}
+
+/// <summary>
 /// Represents a parsed SDSL shader with its AST and extracted information.
 /// </summary>
 public class ParsedShader
@@ -569,22 +729,55 @@ public class ParsedShader
     public ClassType? ShaderClass { get; }
     public bool IsPartial { get; }
 
+    /// <summary>
+    /// Base shader names (may include template arguments like "ColorModulator<1.0f>").
+    /// Use BaseShaderReferences for parsed information.
+    /// </summary>
     public IReadOnlyList<string> BaseShaderNames { get; }
+
+    /// <summary>
+    /// Parsed base shader references with template arguments separated.
+    /// </summary>
+    public IReadOnlyList<BaseShaderReference> BaseShaderReferences { get; }
+
+    /// <summary>
+    /// Template parameters declared by this shader (e.g., "float Intensity").
+    /// Empty if this shader is not a template.
+    /// </summary>
+    public IReadOnlyList<TemplateParameter> TemplateParameters { get; }
+
+    /// <summary>
+    /// Returns true if this shader has template parameters.
+    /// </summary>
+    public bool IsTemplate => TemplateParameters.Count > 0;
+
     public IReadOnlyList<ShaderVariable> Variables { get; }
     public IReadOnlyList<ShaderMethod> Methods { get; }
     public IReadOnlyList<ShaderComposition> Compositions { get; }
 
-    public ParsedShader(string name, Shader shader, ClassType shaderClass)
+    public ParsedShader(string name, Shader shader, ClassType shaderClass, List<TemplateParameter>? templateParams = null)
     {
-        Name = name;
+        // Use the actual shader class name from AST, not the filename
+        // This allows detecting filename/shader name mismatches
+        Name = shaderClass.Name?.Text ?? name;
         Shader = shader;
         ShaderClass = shaderClass;
         IsPartial = false;
 
-        // Extract base shader names
+        // Use provided template parameters or try to extract from AST (less reliable)
+        TemplateParameters = templateParams?.Count > 0
+            ? templateParams
+            : ExtractTemplateParameters(shaderClass);
+
+        // Extract base shader names (preserving template arguments)
         BaseShaderNames = shaderClass.BaseClasses?
-            .Select(bc => bc.Name.Text)
+            .Select(bc => GetFullBaseClassName(bc))
             .ToList() ?? new List<string>();
+
+        // Parse base shader references
+        BaseShaderReferences = BaseShaderNames
+            .Select(n => new BaseShaderReference(n))
+            .ToList();
 
         // Extract variables
         var variables = shaderClass.Members.OfType<Variable>().ToList();
@@ -603,18 +796,88 @@ public class ParsedShader
             .ToList();
     }
 
+    /// <summary>
+    /// Get full base class name including template arguments.
+    /// </summary>
+    private static string GetFullBaseClassName(TypeBase baseClass)
+    {
+        // Try to get the full string representation which includes generics
+        var fullName = baseClass.ToString();
+        if (!string.IsNullOrEmpty(fullName) && fullName != baseClass.Name?.Text)
+        {
+            // Clean up any whitespace
+            return Regex.Replace(fullName, @"\s+", "");
+        }
+        return baseClass.Name?.Text ?? "unknown";
+    }
+
+    /// <summary>
+    /// Extract template parameters from shader class using reflection.
+    /// </summary>
+    private static List<TemplateParameter> ExtractTemplateParameters(ClassType shaderClass)
+    {
+        var result = new List<TemplateParameter>();
+
+        try
+        {
+            // Stride's ClassType may have GenericParameters or GenericArguments property
+            var genericParamsProperty = shaderClass.GetType().GetProperty("GenericParameters");
+            if (genericParamsProperty != null)
+            {
+                var genericParams = genericParamsProperty.GetValue(shaderClass) as System.Collections.IEnumerable;
+                if (genericParams != null)
+                {
+                    foreach (var param in genericParams)
+                    {
+                        var nameProperty = param.GetType().GetProperty("Name");
+                        var typeProperty = param.GetType().GetProperty("Type");
+
+                        string? name = null;
+                        string? typeName = null;
+
+                        if (nameProperty != null)
+                        {
+                            var nameObj = nameProperty.GetValue(param);
+                            name = nameObj?.ToString();
+                        }
+
+                        if (typeProperty != null)
+                        {
+                            var typeObj = typeProperty.GetValue(param);
+                            typeName = typeObj?.ToString();
+                        }
+
+                        if (!string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(typeName))
+                        {
+                            result.Add(new TemplateParameter(name, typeName));
+                        }
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Ignore reflection errors
+        }
+
+        return result;
+    }
+
     // Private constructor for partial shaders (from regex fallback)
     private ParsedShader(
         string name,
         IReadOnlyList<string> baseShaderNames,
         IReadOnlyList<ShaderVariable> variables,
-        IReadOnlyList<ShaderMethod> methods)
+        IReadOnlyList<ShaderMethod> methods,
+        IReadOnlyList<TemplateParameter> templateParameters)
     {
         Name = name;
         Shader = null;
         ShaderClass = null;
         IsPartial = true;
         BaseShaderNames = baseShaderNames;
+        BaseShaderReferences = baseShaderNames.Select(n => new BaseShaderReference(n)).ToList();
+        TemplateParameters = templateParameters;
         Variables = variables;
         Methods = methods;
         Compositions = new List<ShaderComposition>();
@@ -627,13 +890,15 @@ public class ParsedShader
         string name,
         List<string> baseNames,
         List<RegexExtractedVariable> variables,
-        List<RegexExtractedMethod> methods)
+        List<RegexExtractedMethod> methods,
+        List<TemplateParameter>? templateParams = null)
     {
         return new ParsedShader(
             name,
             baseNames,
             variables.Select(v => ShaderVariable.CreatePartial(v.Name, v.TypeName)).ToList(),
-            methods.Select(m => ShaderMethod.CreatePartial(m.Name, m.ReturnType)).ToList()
+            methods.Select(m => ShaderMethod.CreatePartial(m.Name, m.ReturnType)).ToList(),
+            templateParams ?? new List<TemplateParameter>()
         );
     }
 }

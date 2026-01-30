@@ -1,0 +1,18 @@
+// Template with multiple parameters including Texture2D
+shader TexturedWave<float Frequency, float Amplitude, Texture2D WaveTexture> : ComputeBase
+{
+    SamplerState WaveSampler;
+
+    float SampleWave(float2 uv)
+    {
+        // Access template texture parameter
+        float sample = WaveTexture.Sample(WaveSampler, uv).r;
+        // Use template value parameters
+        return sin(uv.x * Frequency) * Amplitude * sample;
+    }
+
+    override void Compute()
+    {
+        float wave = SampleWave(float2(0.5, 0.5));
+    }
+};

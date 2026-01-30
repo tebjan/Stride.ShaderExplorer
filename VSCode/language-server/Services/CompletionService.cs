@@ -222,12 +222,37 @@ public class CompletionService
     {
         return _workspace.GetAllShaderNames()
             .Where(s => s.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-            .Select(s => new CompletionItem
+            .Select(s =>
             {
-                Label = s,
-                Kind = CompletionItemKind.Class,
-                Detail = "Shader",
-                SortText = "5_" + s
+                var parsed = _workspace.GetParsedShader(s);
+                var detail = "Shader";
+                var insertText = s;
+                var labelDetails = (CompletionItemLabelDetails?)null;
+
+                // Show template signature for templated shaders
+                if (parsed?.IsTemplate == true)
+                {
+                    var templateParams = string.Join(", ", parsed.TemplateParameters.Select(p => $"{p.TypeName} {p.Name}"));
+                    detail = $"Shader<{templateParams}>";
+                    labelDetails = new CompletionItemLabelDetails
+                    {
+                        Detail = $"<{templateParams}>"
+                    };
+                    // Insert with template placeholder
+                    var placeholders = string.Join(", ", parsed.TemplateParameters.Select((p, i) => $"${{{i + 1}:{p.Name}}}"));
+                    insertText = $"{s}<{placeholders}>";
+                }
+
+                return new CompletionItem
+                {
+                    Label = s,
+                    Kind = CompletionItemKind.Class,
+                    Detail = detail,
+                    LabelDetails = labelDetails,
+                    InsertText = insertText,
+                    InsertTextFormat = parsed?.IsTemplate == true ? InsertTextFormat.Snippet : InsertTextFormat.PlainText,
+                    SortText = "5_" + s
+                };
             });
     }
 

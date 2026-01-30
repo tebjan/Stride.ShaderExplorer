@@ -15,13 +15,23 @@ export class ExternalShaderProvider implements vscode.FileSystemProvider {
     private _onDidChangeFile = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
     readonly onDidChangeFile = this._onDidChangeFile.event;
 
+    /**
+     * Convert URI path to a real file system path.
+     * On Windows, uri.path returns "/C:/path/..." but we need "C:/path/...".
+     */
+    private getRealPath(uri: vscode.Uri): string {
+        // Use fsPath which handles Windows paths correctly
+        // uri.fsPath converts "/C:/path" to "c:\path" on Windows
+        return uri.fsPath;
+    }
+
     watch(): vscode.Disposable {
         // No need to watch external files
         return new vscode.Disposable(() => {});
     }
 
     stat(uri: vscode.Uri): vscode.FileStat {
-        const realPath = uri.path;
+        const realPath = this.getRealPath(uri);
         try {
             const stats = fs.statSync(realPath);
             return {
@@ -44,7 +54,7 @@ export class ExternalShaderProvider implements vscode.FileSystemProvider {
     }
 
     readFile(uri: vscode.Uri): Uint8Array {
-        const realPath = uri.path;
+        const realPath = this.getRealPath(uri);
         try {
             const content = fs.readFileSync(realPath);
             return content;
@@ -74,10 +84,11 @@ export class ExternalShaderProvider implements vscode.FileSystemProvider {
  * @returns URI with sdsl-external scheme
  */
 export function createExternalShaderUri(filePath: string, lineNumber?: number): vscode.Uri {
-    let uri = vscode.Uri.from({
-        scheme: EXTERNAL_SHADER_SCHEME,
-        path: filePath,
-    });
+    // First create a file URI to properly handle Windows paths,
+    // then change the scheme to our custom scheme.
+    // This ensures proper path encoding (C:\path -> /c:/path)
+    const fileUri = vscode.Uri.file(filePath);
+    let uri = fileUri.with({ scheme: EXTERNAL_SHADER_SCHEME });
 
     if (lineNumber !== undefined && lineNumber > 0) {
         uri = uri.with({ fragment: `L${lineNumber}` });

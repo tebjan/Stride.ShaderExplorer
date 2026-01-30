@@ -88,6 +88,21 @@ public class HoverHandler : HoverHandlerBase
                 return Task.FromResult<Hover?>(memberHover);
         }
 
+        // Check if hovering on the shader declaration name and there's a filename mismatch
+        var fileName = Path.GetFileNameWithoutExtension(path);
+        if (currentParsed != null && word == currentParsed.Name && fileName != currentParsed.Name)
+        {
+            var markdown = BuildFilenameMismatchHoverContent(fileName, currentParsed.Name, path);
+            return Task.FromResult<Hover?>(new Hover
+            {
+                Contents = new MarkedStringsOrMarkupContent(new MarkupContent
+                {
+                    Kind = MarkupKind.Markdown,
+                    Value = markdown
+                })
+            });
+        }
+
         // Check if it's a shader name
         var shaderInfo = _workspace.GetShaderByName(word);
         _logger.LogInformation("Shader lookup for '{Word}': {Found}", word, shaderInfo != null ? "FOUND" : "NOT FOUND");
@@ -95,7 +110,7 @@ public class HoverHandler : HoverHandlerBase
         if (shaderInfo != null)
         {
             var parsed = _workspace.GetParsedShader(word);
-            var markdown = BuildShaderHoverContent(word, parsed, shaderInfo.DisplayPath);
+            var markdown = BuildShaderHoverContent(word, parsed, shaderInfo.DisplayPath, shaderInfo.FilePath);
 
             // Check if this is a redundant base shader (add remove action only, diagnostic shows the warning)
             if (currentParsed != null && IsRedundantBaseShader(currentParsed, word, out var inheritedVia))
@@ -133,6 +148,22 @@ public class HoverHandler : HoverHandlerBase
 
         if (currentParsed != null)
         {
+            // Check if it's a template parameter first (they're read-only compile-time values)
+            var templateParam = currentParsed.TemplateParameters
+                .FirstOrDefault(p => string.Equals(p.Name, word, StringComparison.OrdinalIgnoreCase));
+            if (templateParam != null)
+            {
+                var markdown = BuildTemplateParameterHoverContent(templateParam);
+                return Task.FromResult<Hover?>(new Hover
+                {
+                    Contents = new MarkedStringsOrMarkupContent(new MarkupContent
+                    {
+                        Kind = MarkupKind.Markdown,
+                        Value = markdown
+                    })
+                });
+            }
+
             // Check variables (local and inherited)
             var variableMatch = _inheritanceResolver.FindVariable(currentParsed, word);
             _logger.LogInformation("Variable lookup for '{Word}': {Found}", word, variableMatch.Variable != null ? $"FOUND in {variableMatch.DefinedIn}" : "NOT FOUND");
@@ -558,14 +589,35 @@ public class HoverHandler : HoverHandlerBase
         return false;
     }
 
-    private static string BuildShaderHoverContent(string name, ParsedShader? parsed, string filePath)
+    private static string BuildShaderHoverContent(string name, ParsedShader? parsed, string displayPath, string fullFilePath)
     {
         var sb = new System.Text.StringBuilder();
-        sb.AppendLine($"## shader {name}");
+
+        // Show template parameters in shader declaration if present
+        if (parsed?.IsTemplate == true)
+        {
+            var templateParams = string.Join(", ", parsed.TemplateParameters.Select(p => $"{p.TypeName} {p.Name}"));
+            sb.AppendLine($"## shader {name}<{templateParams}>");
+        }
+        else
+        {
+            sb.AppendLine($"## shader {name}");
+        }
         sb.AppendLine();
 
         if (parsed != null)
         {
+            // Show template parameter details
+            if (parsed.IsTemplate)
+            {
+                sb.AppendLine("**Template Parameters:**");
+                foreach (var param in parsed.TemplateParameters)
+                {
+                    sb.AppendLine($"- `{param.TypeName} {param.Name}`");
+                }
+                sb.AppendLine();
+            }
+
             if (parsed.BaseShaderNames.Any())
             {
                 sb.AppendLine($"**Inherits from:** {string.Join(", ", parsed.BaseShaderNames)}");
@@ -589,7 +641,8 @@ public class HoverHandler : HoverHandlerBase
         }
 
         sb.AppendLine();
-        sb.AppendLine($"*{filePath}*");
+        // Clickable file path - will be transformed by extension to a command link
+        sb.AppendLine($"OpenFile: {displayPath}|{fullFilePath}|1");
 
         return sb.ToString();
     }
@@ -824,6 +877,56 @@ public class HoverHandler : HoverHandlerBase
             {
                 sb.AppendLine($"- *...and {allBaseMethods.Count - 4} more*");
             }
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Build hover content for filename/shader name mismatch with clickable fix actions.
+    /// </summary>
+    /// <summary>
+    /// Build hover content for template parameters (read-only compile-time values).
+    /// </summary>
+    private static string BuildTemplateParameterHoverContent(TemplateParameter param)
+    {
+        var sb = new System.Text.StringBuilder();
+
+        sb.AppendLine("```sdsl");
+        sb.AppendLine($"{param.TypeName} {param.Name}");
+        sb.AppendLine("```");
+        sb.AppendLine();
+        sb.AppendLine("**Template parameter** *(read-only)*");
+        sb.AppendLine();
+        sb.AppendLine("Compile-time constant value substituted when the template is instantiated.");
+
+        return sb.ToString();
+    }
+
+    private static string BuildFilenameMismatchHoverContent(string fileName, string shaderName, string filePath)
+    {
+        var sb = new System.Text.StringBuilder();
+
+        sb.AppendLine($"⚠️ **Filename mismatch**");
+        sb.AppendLine();
+        sb.AppendLine($"File: `{fileName}.sdsl`");
+        sb.AppendLine($"Shader: `{shaderName}`");
+        sb.AppendLine();
+
+        // Check if it's a copy pattern
+        var isCopyPattern = fileName.Contains(" - Copy", StringComparison.OrdinalIgnoreCase) ||
+                           System.Text.RegularExpressions.Regex.IsMatch(fileName, @"\s*\(\d+\)$");
+
+        // Build clickable action links using the same pattern as Add:/Remove:
+        var directory = Path.GetDirectoryName(filePath) ?? "";
+        var newFilePath = Path.Combine(directory, shaderName + ".sdsl");
+
+        sb.AppendLine("**Quick fixes:**");
+        sb.AppendLine($"- RenameFile: {shaderName}.sdsl|{filePath}|{newFilePath}");
+
+        if (!isCopyPattern)
+        {
+            sb.AppendLine($"- RenameShader: {fileName}");
         }
 
         return sb.ToString();

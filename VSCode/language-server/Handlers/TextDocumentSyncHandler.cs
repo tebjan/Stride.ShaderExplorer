@@ -47,6 +47,9 @@ public class TextDocumentSyncHandler : TextDocumentSyncHandlerBase, IDisposable
         _parser = parser;
         _semanticValidator = semanticValidator;
         _server = server;
+
+        // Subscribe to background diagnostics requests
+        _workspace.RequestDiagnosticsPublish += PublishDiagnosticsForFile;
     }
 
     public override TextDocumentAttributes GetTextDocumentAttributes(DocumentUri uri)
@@ -148,6 +151,23 @@ public class TextDocumentSyncHandler : TextDocumentSyncHandlerBase, IDisposable
     }
 
     /// <summary>
+    /// Publish diagnostics for a file by path. Used for background diagnostics of workspace shaders.
+    /// </summary>
+    public void PublishDiagnosticsForFile(string filePath)
+    {
+        try
+        {
+            var content = File.ReadAllText(filePath);
+            var uri = DocumentUri.FromFileSystemPath(filePath);
+            PublishDiagnostics(uri, content);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to publish diagnostics for {Path}", filePath);
+        }
+    }
+
+    /// <summary>
     /// Publish diagnostics for a document. Called after debounce delay.
     /// </summary>
     private void PublishDiagnostics(DocumentUri uri, string content)
@@ -163,7 +183,7 @@ public class TextDocumentSyncHandler : TextDocumentSyncHandlerBase, IDisposable
             // Run semantic validation if we have a parsed shader
             if (result.Shader != null && !result.IsPartial)
             {
-                var semanticDiagnostics = _semanticValidator.Validate(result.Shader, content);
+                var semanticDiagnostics = _semanticValidator.Validate(result.Shader, content, path);
                 allDiagnostics.AddRange(semanticDiagnostics);
             }
 
@@ -220,6 +240,9 @@ public class TextDocumentSyncHandler : TextDocumentSyncHandlerBase, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+
+        // Unsubscribe from workspace events
+        _workspace.RequestDiagnosticsPublish -= PublishDiagnosticsForFile;
 
         _logger.LogDebug("Disposing TextDocumentSyncHandler, cancelling {Count} pending diagnostic tasks", _diagnosticDebounce.Count);
 

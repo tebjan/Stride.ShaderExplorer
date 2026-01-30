@@ -27,6 +27,15 @@ const ADD_SHADER_REGEX = /Add:\s+(\w+)/g;
 // Regex to detect each "Remove: ShaderName" pattern in hover content (global)
 const REMOVE_SHADER_REGEX = /Remove:\s+(\w+)/g;
 
+// Regex to detect "RenameFile: newName.sdsl|oldPath|newPath" pattern
+const RENAME_FILE_REGEX = /RenameFile:\s+([^|]+)\|([^|]+)\|(.+)/g;
+
+// Regex to detect "RenameShader: newName" pattern
+const RENAME_SHADER_REGEX = /RenameShader:\s+(\w+)/g;
+
+// Regex to detect "OpenFile: displayPath|fullPath|line" pattern for clickable file paths
+const OPEN_FILE_REGEX = /OpenFile:\s+([^|]+)\|([^|]+)\|(\d+)/g;
+
 // Interface for dotnet.acquire result
 interface IDotnetAcquireResult {
     dotnetPath: string;
@@ -59,6 +68,9 @@ export async function activate(context: vscode.ExtensionContext) {
     // Non-workspace files (Stride/vvvv shaders) open as read-only
     context.subscriptions.push(
         vscode.commands.registerCommand('strideShaderTools.openShader', async (filePath: string, line?: number) => {
+            if (typeof filePath !== 'string') {
+                return;
+            }
             await openShaderFile(filePath, line);
         })
     );
@@ -95,11 +107,26 @@ export async function activate(context: vscode.ExtensionContext) {
     // Initialize unified TreeView provider (it will get the client later)
     unifiedTreeProvider = new UnifiedTreeProvider(undefined);
 
-    // Register unified TreeView
+    // Register unified TreeView and listen for expansion state changes
+    const treeView = vscode.window.createTreeView('strideShaderContext', {
+        treeDataProvider: unifiedTreeProvider,
+        showCollapseAll: true,
+    });
+    context.subscriptions.push(treeView);
+
+    // Track expansion state changes
     context.subscriptions.push(
-        vscode.window.createTreeView('strideShaderContext', {
-            treeDataProvider: unifiedTreeProvider,
-            showCollapseAll: true,
+        treeView.onDidExpandElement(e => {
+            const nodeId = (e.element as any).id ?? getNodeIdFromElement(e.element);
+            if (nodeId) {
+                unifiedTreeProvider.onNodeExpansionChanged(nodeId, false);
+            }
+        }),
+        treeView.onDidCollapseElement(e => {
+            const nodeId = (e.element as any).id ?? getNodeIdFromElement(e.element);
+            if (nodeId) {
+                unifiedTreeProvider.onNodeExpansionChanged(nodeId, true);
+            }
         })
     );
 
@@ -138,9 +165,9 @@ export async function activate(context: vscode.ExtensionContext) {
             const document = editor.document;
             const text = document.getText();
 
-            // Find the shader declaration line: "shader Name : Base1, Base2 {" or "shader Name {"
-            // Capture groups: 1=shader+name, 2=colon if present, 3=base shaders, 4=whitespace before brace, 5=brace
-            const shaderDeclRegex = /^(\s*shader\s+\w+)(\s*:\s*)?([\w\s,<>]*?)(\s*)(\{)/m;
+            // Find the shader declaration line: "shader Name<...> : Base1, Base2 {" or "shader Name {"
+            // Capture groups: 1=shader+name+optional template params, 2=colon if present, 3=base shaders, 4=whitespace before brace, 5=brace
+            const shaderDeclRegex = /^(\s*shader\s+\w+(?:<[^>]+>)?)(\s*:\s*)?([\w\s,<>]*?)(\s*)(\{)/m;
             const match = shaderDeclRegex.exec(text);
 
             if (!match) {
@@ -189,9 +216,9 @@ export async function activate(context: vscode.ExtensionContext) {
             const document = editor.document;
             const text = document.getText();
 
-            // Find the shader declaration line: "shader Name : Base1, Base2 {"
-            // Capture groups: 1=shader+name, 2=colon+space, 3=base shaders, 4=whitespace before brace, 5=brace
-            const shaderDeclRegex = /^(\s*shader\s+\w+)(\s*:\s*)([\w\s,<>]+?)(\s*)(\{)/m;
+            // Find the shader declaration line: "shader Name<...> : Base1, Base2 {"
+            // Capture groups: 1=shader+name+optional template params, 2=colon+space, 3=base shaders, 4=whitespace before brace, 5=brace
+            const shaderDeclRegex = /^(\s*shader\s+\w+(?:<[^>]+>)?)(\s*:\s*)([\w\s,<>]+?)(\s*)(\{)/m;
             const match = shaderDeclRegex.exec(text);
 
             if (!match) {
@@ -240,6 +267,46 @@ export async function activate(context: vscode.ExtensionContext) {
         })
     );
 
+    // Command to rename a shader file (used by quick fix for filename mismatch)
+    context.subscriptions.push(
+        vscode.commands.registerCommand('strideShaderTools.renameFile', async (oldPath: string, newPath: string) => {
+            const oldUri = vscode.Uri.file(oldPath);
+            const newUri = vscode.Uri.file(newPath);
+            const edit = new vscode.WorkspaceEdit();
+            edit.renameFile(oldUri, newUri);
+            await vscode.workspace.applyEdit(edit);
+        })
+    );
+
+    // Command to rename the shader declaration in the current file
+    context.subscriptions.push(
+        vscode.commands.registerCommand('strideShaderTools.renameShaderInFile', async (newName: string) => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor || editor.document.languageId !== 'sdsl') {
+                return;
+            }
+
+            const text = editor.document.getText();
+            // Find "shader OldName" and replace with "shader NewName"
+            const shaderDeclRegex = /(\bshader\s+)(\w+)(\s*[:<{])/;
+            const match = shaderDeclRegex.exec(text);
+
+            if (!match) {
+                vscode.window.showWarningMessage('Could not find shader declaration.');
+                return;
+            }
+
+            const startOffset = match.index + match[1].length;
+            const endOffset = startOffset + match[2].length;
+            const startPos = editor.document.positionAt(startOffset);
+            const endPos = editor.document.positionAt(endOffset);
+
+            await editor.edit(editBuilder => {
+                editBuilder.replace(new vscode.Range(startPos, endPos), newName);
+            });
+        })
+    );
+
     // Register a supplementary hover provider for diagnostics with clickable fix links
     context.subscriptions.push(
         vscode.languages.registerHoverProvider('sdsl', new DiagnosticHoverProvider())
@@ -267,11 +334,10 @@ async function acquireDotNetRuntime(): Promise<string | undefined> {
         );
 
         if (result?.dotnetPath) {
-            console.log('Acquired .NET runtime at:', result.dotnetPath);
             return result.dotnetPath;
         }
-    } catch (error) {
-        console.error('Failed to acquire .NET runtime:', error);
+    } catch {
+        // Failed to acquire runtime, will fall back to system dotnet
     }
 
     return undefined;
@@ -338,8 +404,6 @@ async function startLanguageServer(context: vscode.ExtensionContext): Promise<vo
         }
     } else if (isProductionMode) {
         // Production: use bundled DLL with acquired .NET runtime
-        console.log('Using bundled language server:', bundledDll);
-
         const dotnetPath = await acquireDotNetRuntime();
         if (!dotnetPath) {
             vscode.window.showErrorMessage(
@@ -353,14 +417,6 @@ async function startLanguageServer(context: vscode.ExtensionContext): Promise<vo
     } else {
         // Development: run from source (requires .NET SDK on PATH)
         const devProjectPath = path.join(context.extensionPath, '..', 'language-server');
-        console.log('[LSP] Extension path:', context.extensionPath);
-        console.log('[LSP] Dev project path:', devProjectPath);
-        console.log('[LSP] Dev path exists:', fs.existsSync(devProjectPath));
-
-        // Verify the project file exists
-        const csprojPath = path.join(devProjectPath, 'StrideShaderLanguageServer.csproj');
-        console.log('[LSP] .csproj exists:', fs.existsSync(csprojPath));
-
         serverOptions = createProjectServerOptions(devProjectPath);
     }
 
@@ -404,25 +460,17 @@ async function startLanguageServer(context: vscode.ExtensionContext): Promise<vo
     );
 
     try {
-        console.log('[LSP] Starting language client...');
         await client.start();
-        console.log('[LSP] Language server started successfully');
-
-        // Check if client is actually ready
-        const state = client.state;
-        console.log('[LSP] Client state after start:', state);
 
         // Set the client on the unified TreeView provider now that it's ready
         unifiedTreeProvider.setClient(client);
-        console.log('[LSP] TreeView provider connected to client');
 
         // Initial refresh if there's an active SDSL editor
         if (vscode.window.activeTextEditor?.document.languageId === 'sdsl') {
-            console.log('[LSP] Active SDSL editor found, refreshing panel');
             unifiedTreeProvider.refresh();
         }
     } catch (error) {
-        console.error('[LSP] Failed to start language server:', error);
+        console.error('Failed to start language server:', error);
         vscode.window.showWarningMessage(
             'Failed to start Stride Shader Language Server. IntelliSense may be limited. Check the Output panel for details.'
         );
@@ -478,6 +526,27 @@ function transformHoverWithClickableLinks(hover: vscode.Hover): vscode.Hover {
             const args = encodeURIComponent(JSON.stringify([shaderName]));
             const commandUri = `command:strideShaderTools.removeBaseShader?${args}`;
             return `[Remove ${shaderName}](${commandUri})`;
+        });
+
+        // Replace "RenameFile: newName.sdsl|oldPath|newPath" with clickable link
+        newText = newText.replace(RENAME_FILE_REGEX, (_match, newName: string, oldPath: string, newPath: string) => {
+            const args = encodeURIComponent(JSON.stringify([oldPath.trim(), newPath.trim()]));
+            const commandUri = `command:strideShaderTools.renameFile?${args}`;
+            return `[Rename file to ${newName.trim()}](${commandUri})`;
+        });
+
+        // Replace "RenameShader: newName" with clickable link
+        newText = newText.replace(RENAME_SHADER_REGEX, (_match, newName: string) => {
+            const args = encodeURIComponent(JSON.stringify([newName]));
+            const commandUri = `command:strideShaderTools.renameShaderInFile?${args}`;
+            return `[Rename shader to ${newName}](${commandUri})`;
+        });
+
+        // Replace "OpenFile: displayPath|fullPath|line" with clickable link
+        newText = newText.replace(OPEN_FILE_REGEX, (_match, displayPath: string, fullPath: string, line: string) => {
+            const args = encodeURIComponent(JSON.stringify([fullPath.trim(), parseInt(line, 10)]));
+            const commandUri = `command:strideShaderTools.openShader?${args}`;
+            return `[${displayPath.trim()}](${commandUri})`;
         });
 
         const md = new vscode.MarkdownString(newText);
@@ -552,6 +621,37 @@ async function openShaderFile(filePath: string, line?: number, isWorkspaceShader
         console.error('Failed to open shader file:', error);
         vscode.window.showErrorMessage(`Failed to open shader: ${filePath}`);
     }
+}
+
+/**
+ * Helper function to get a node ID from a tree element.
+ * This is a fallback when the element doesn't have an id property set.
+ */
+function getNodeIdFromElement(element: unknown): string | undefined {
+    if (!element || typeof element !== 'object') return undefined;
+
+    const el = element as Record<string, unknown>;
+
+    if (el.type === 'root' && typeof el.shaderName === 'string') {
+        return `root:${el.shaderName}`;
+    }
+    if (el.type === 'category' && typeof el.category === 'string') {
+        return `category:${el.category}`;
+    }
+    if (el.type === 'shader' && typeof el.shader === 'object' && el.shader) {
+        const shader = el.shader as Record<string, unknown>;
+        return `shader:${shader.name}`;
+    }
+    if (el.type === 'member' && typeof el.member === 'object' && el.member && typeof el.category === 'string') {
+        const member = el.member as Record<string, unknown>;
+        return `member:${el.category}:${member.sourceShader}:${member.name}`;
+    }
+    if (el.type === 'composition' && typeof el.composition === 'object' && el.composition) {
+        const comp = el.composition as Record<string, unknown>;
+        return `composition:${comp.sourceShader}:${comp.name}`;
+    }
+
+    return undefined;
 }
 
 export function deactivate(): Thenable<void> | undefined {

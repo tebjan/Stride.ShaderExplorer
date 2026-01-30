@@ -72,10 +72,12 @@ public class InheritanceResolver
             foreach (var shader in allShaders)
             {
                 var parsed = _workspace.GetParsedShader(shader.Name);
-                if (parsed?.BaseShaderNames == null) continue;
+                if (parsed?.BaseShaderReferences == null) continue;
 
-                foreach (var baseName in parsed.BaseShaderNames)
+                // Use BaseName (stripped of template arguments) for counting
+                foreach (var baseRef in parsed.BaseShaderReferences)
                 {
+                    var baseName = baseRef.BaseName;
                     if (!_childCountCache.ContainsKey(baseName))
                         _childCountCache[baseName] = 0;
                     _childCountCache[baseName]++;
@@ -131,26 +133,35 @@ public class InheritanceResolver
         var result = new List<ParsedShader>();
         var parsed = _workspace.GetParsedShader(shaderName);
 
-        if (parsed?.BaseShaderNames == null)
+        if (parsed?.BaseShaderReferences == null || parsed.BaseShaderReferences.Count == 0)
             return result;
 
         _logger.LogDebug("Resolving inheritance for {ShaderName}, base shaders: {BaseShaders}",
             shaderName, string.Join(", ", parsed.BaseShaderNames));
 
-        foreach (var baseName in parsed.BaseShaderNames)
+        foreach (var baseRef in parsed.BaseShaderReferences)
         {
-            var baseParsed = _workspace.GetParsedShader(baseName);
+            // Use BaseName (stripped of template arguments) for lookup
+            // e.g., "ColorModulator<1.0f>" -> lookup "ColorModulator"
+            var lookupName = baseRef.BaseName;
+            var baseParsed = _workspace.GetParsedShader(lookupName);
+
             if (baseParsed != null)
             {
-                _logger.LogDebug("Found base shader {BaseName} with {VarCount} variables, {MethodCount} methods",
-                    baseName, baseParsed.Variables.Count, baseParsed.Methods.Count);
+                _logger.LogDebug("Found base shader {BaseName} (from {FullName}) with {VarCount} variables, {MethodCount} methods{TemplateInfo}",
+                    lookupName,
+                    baseRef.FullName,
+                    baseParsed.Variables.Count,
+                    baseParsed.Methods.Count,
+                    baseRef.HasTemplateArguments ? $", template args: [{string.Join(", ", baseRef.TemplateArguments)}]" : "");
                 result.Add(baseParsed);
                 // Recursively add base shader's bases
-                result.AddRange(ResolveInheritanceChainInternal(baseName, visited));
+                result.AddRange(ResolveInheritanceChainInternal(lookupName, visited));
             }
             else
             {
-                _logger.LogWarning("Base shader {BaseName} NOT FOUND for {ShaderName}", baseName, shaderName);
+                _logger.LogWarning("Base shader {BaseName} NOT FOUND for {ShaderName} (full ref: {FullName})",
+                    lookupName, shaderName, baseRef.FullName);
             }
         }
 

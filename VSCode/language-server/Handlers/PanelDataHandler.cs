@@ -5,17 +5,19 @@ namespace StrideShaderLanguageServer.Handlers;
 // Inheritance Tree Request/Response
 public record InheritanceTreeParams(string Uri);
 
+// Hierarchical shader node with children for tree display
 public record ShaderNode(
     string Name,
     string FilePath,
     string Source,
     int Line,
-    bool IsLocal
+    bool IsLocal,
+    List<ShaderNode>? Children = null  // Direct base shaders of this shader
 );
 
 public record InheritanceTreeResponse(
     ShaderNode? CurrentShader,
-    List<ShaderNode> BaseShaders
+    List<ShaderNode> BaseShaders  // Flat list for backwards compatibility
 );
 
 // Shader Members Request/Response
@@ -41,10 +43,20 @@ public record MemberGroup(
     bool IsLocal
 );
 
+public record CompositionInfo(
+    string Name,
+    string Type,
+    int Line,
+    string FilePath,
+    bool IsLocal,
+    string SourceShader
+);
+
 public record ShaderMembersResponse(
     List<MemberInfo> Streams,
     List<MemberGroup> Variables,
-    List<MemberGroup> Methods
+    List<MemberGroup> Methods,
+    List<CompositionInfo> Compositions
 );
 
 #endregion

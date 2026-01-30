@@ -76,6 +76,15 @@ public class CodeActionHandler : CodeActionHandlerBase
                     actions.AddRange(fixActions);
                 }
             }
+            // Check for filename/shader name mismatch
+            else if (diagnostic.Code?.String == "shader-filename-mismatch" ||
+                     message.Contains("doesn't match shader name"))
+            {
+                // Check if this is a copy pattern (stored in diagnostic Data)
+                var isCopyPattern = diagnostic.Data?.ToString() == "copy";
+                var fixActions = CreateFilenameMismatchActions(uri, content, path, message, diagnostic.Range, isCopyPattern);
+                actions.AddRange(fixActions);
+            }
             // Check for base shader not found
             else if (message.Contains("not found in workspace"))
             {
@@ -262,6 +271,148 @@ public class CodeActionHandler : CodeActionHandlerBase
         // This could be extended to offer suggestions even without explicit errors
         // For now, return empty - the diagnostic-based suggestions cover most cases
         return new List<CommandOrCodeAction>();
+    }
+
+    /// <summary>
+    /// Create code actions for filename/shader name mismatch.
+    /// </summary>
+    private List<CommandOrCodeAction> CreateFilenameMismatchActions(
+        DocumentUri uri,
+        string content,
+        string filePath,
+        string diagnosticMessage,
+        Range diagnosticRange,
+        bool isCopyPattern)
+    {
+        var actions = new List<CommandOrCodeAction>();
+
+        // Parse the message to extract file and shader names
+        // Message format: "Filename 'X' doesn't match shader name 'Y'"
+        var filenameMatch = Regex.Match(diagnosticMessage, @"Filename '([^']+)'");
+        var shaderNameMatch = Regex.Match(diagnosticMessage, @"shader name '(\w+)'");
+
+        if (!filenameMatch.Success || !shaderNameMatch.Success)
+        {
+            _logger.LogWarning("Could not parse filename mismatch message: {Message}", diagnosticMessage);
+            return actions;
+        }
+
+        var fileName = filenameMatch.Groups[1].Value;
+        var shaderName = shaderNameMatch.Groups[1].Value;
+
+        // Action 1: Rename file to match shader name
+        var directory = Path.GetDirectoryName(filePath) ?? "";
+        var newFilePath = Path.Combine(directory, shaderName + ".sdsl");
+
+        // Use a command for file rename since WorkspaceEdit.DocumentChanges with RenameFile
+        // requires the client to support it, which may vary
+        var renameFileAction = new CodeAction
+        {
+            Title = $"Rename file to '{shaderName}.sdsl'",
+            Kind = CodeActionKind.QuickFix,
+            Diagnostics = new Container<Diagnostic>(new Diagnostic
+            {
+                Range = diagnosticRange,
+                Message = diagnosticMessage,
+                Code = "shader-filename-mismatch"
+            }),
+            Command = new Command
+            {
+                Name = "strideShaderTools.renameFile",
+                Title = $"Rename file to '{shaderName}.sdsl'",
+                Arguments = new Newtonsoft.Json.Linq.JArray { filePath, newFilePath }
+            },
+            IsPreferred = true // File rename is usually the preferred action
+        };
+        actions.Add(renameFileAction);
+
+        // Action 2: Rename shader to match filename (only if not a copy pattern)
+        if (!isCopyPattern)
+        {
+            var renameShaderEdit = CreateRenameShaderEdit(uri, content, shaderName, fileName);
+            if (renameShaderEdit != null)
+            {
+                var renameShaderAction = new CodeAction
+                {
+                    Title = $"Rename shader to '{fileName}'",
+                    Kind = CodeActionKind.QuickFix,
+                    Diagnostics = new Container<Diagnostic>(new Diagnostic
+                    {
+                        Range = diagnosticRange,
+                        Message = diagnosticMessage,
+                        Code = "shader-filename-mismatch"
+                    }),
+                    Edit = renameShaderEdit,
+                    IsPreferred = false
+                };
+                actions.Add(renameShaderAction);
+            }
+        }
+
+        return actions;
+    }
+
+    /// <summary>
+    /// Create a WorkspaceEdit that renames the shader declaration.
+    /// </summary>
+    private WorkspaceEdit? CreateRenameShaderEdit(DocumentUri uri, string content, string oldName, string newName)
+    {
+        // Find "shader OldName" in the content and replace with "shader NewName"
+        var pattern = $@"(\bshader\s+){Regex.Escape(oldName)}(\s*[:<{{])";
+        var match = Regex.Match(content, pattern);
+
+        if (!match.Success)
+        {
+            _logger.LogWarning("Could not find shader declaration for '{OldName}'", oldName);
+            return null;
+        }
+
+        // Calculate start position of the shader name (after "shader ")
+        var shaderKeywordEnd = match.Groups[1].Index + match.Groups[1].Length;
+        var nameStart = shaderKeywordEnd;
+        var nameEnd = nameStart + oldName.Length;
+
+        // Convert byte positions to line/column
+        var lines = content.Split('\n');
+        int startLine = 0, startCol = 0, endLine = 0, endCol = 0;
+        int currentPos = 0;
+
+        for (int i = 0; i < lines.Length; i++)
+        {
+            var lineLength = lines[i].Length + 1; // +1 for newline
+
+            if (currentPos + lineLength > nameStart && startLine == 0 && startCol == 0)
+            {
+                startLine = i;
+                startCol = nameStart - currentPos;
+            }
+
+            if (currentPos + lineLength > nameEnd)
+            {
+                endLine = i;
+                endCol = nameEnd - currentPos;
+                break;
+            }
+
+            currentPos += lineLength;
+        }
+
+        var editRange = new Range(startLine, startCol, endLine, endCol);
+
+        return new WorkspaceEdit
+        {
+            Changes = new Dictionary<DocumentUri, IEnumerable<TextEdit>>
+            {
+                [uri] = new[]
+                {
+                    new TextEdit
+                    {
+                        Range = editRange,
+                        NewText = newName
+                    }
+                }
+            }
+        };
     }
 
     public override Task<CodeAction> Handle(CodeAction request, CancellationToken cancellationToken)
