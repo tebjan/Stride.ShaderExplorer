@@ -297,6 +297,40 @@ public class HoverHandler : HoverHandlerBase
         // Try to determine the type of the target
         string? targetType = null;
 
+        // Handle base.Method() - show the base shader's method, not the current override
+        if (string.Equals(target, "base", StringComparison.OrdinalIgnoreCase) && currentParsed != null)
+        {
+            // Find the method in base shaders only (exclude the current shader)
+            var allMethods = _inheritanceResolver.FindAllMethodsWithName(currentParsed, member)
+                .Where(m => !string.Equals(m.DefinedIn, currentShaderName, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (allMethods.Count > 0)
+            {
+                // Show the first base implementation (most immediate parent)
+                var (method, definedIn) = allMethods[0];
+                var markdown = BuildBaseMethodHoverContent(method, definedIn, allMethods);
+                return new Hover
+                {
+                    Contents = new MarkedStringsOrMarkupContent(new MarkupContent
+                    {
+                        Kind = MarkupKind.Markdown,
+                        Value = markdown
+                    })
+                };
+            }
+
+            // No base method found - indicate that
+            return new Hover
+            {
+                Contents = new MarkedStringsOrMarkupContent(new MarkupContent
+                {
+                    Kind = MarkupKind.Markdown,
+                    Value = $"⚠️ No base implementation of `{member}()` found"
+                })
+            };
+        }
+
         // Check if target is a known stream type
         if (HlslTypeSystem.IsStreamType(target))
         {
@@ -667,24 +701,40 @@ public class HoverHandler : HoverHandlerBase
 
         // Multiple definitions - show inheritance chain
         var firstMethod = allMethods[0].Method;
+        var qualifiers = new List<string>();
+        if (firstMethod.IsOverride) qualifiers.Add("override");
+        if (firstMethod.IsAbstract) qualifiers.Add("abstract");
+        if (firstMethod.IsStage) qualifiers.Add("stage");
+        var qualifierStr = qualifiers.Any() ? string.Join(" ", qualifiers) + " " : "";
+
         var parameters = string.Join(", ", firstMethod.Parameters.Select(p => $"{p.TypeName} {p.Name}"));
 
-        sb.AppendLine($"### {firstMethod.Name}({parameters})");
+        // Show code block with the method signature
+        sb.AppendLine("```sdsl");
+        sb.AppendLine($"{qualifierStr}{firstMethod.ReturnType} {firstMethod.Name}({parameters})");
+        sb.AppendLine("```");
         sb.AppendLine();
-        sb.AppendLine("**Defined in:**");
 
-        foreach (var (method, definedIn) in allMethods)
+        // Show override chain more clearly
+        sb.AppendLine("**Override chain:**");
+        sb.AppendLine();
+
+        for (int i = 0; i < allMethods.Count; i++)
         {
-            var qualifiers = new List<string>();
-            if (method.IsOverride) qualifiers.Add("override");
-            if (method.IsAbstract) qualifiers.Add("abstract");
-            if (method.IsStage) qualifiers.Add("stage");
-            var qualifierStr = qualifiers.Any() ? $"({string.Join(", ", qualifiers)}) " : "";
+            var (method, definedIn) = allMethods[i];
+            var isLocal = definedIn == currentShaderName;
+            var prefix = isLocal ? "→ " : "  ";
+            var suffix = isLocal ? " *(this shader)*" : "";
 
-            var marker = definedIn == currentShaderName ? "→ " : "  ";
-            var localNote = definedIn == currentShaderName ? " *(local)*" : "";
-
-            sb.AppendLine($"{marker}`{qualifierStr}{method.ReturnType}` from **{definedIn}**{localNote}");
+            // Show override/base relationship
+            if (i == 0)
+            {
+                sb.AppendLine($"{prefix}**{definedIn}**{suffix}");
+            }
+            else
+            {
+                sb.AppendLine($"{prefix}↳ {definedIn}{suffix}");
+            }
         }
 
         return sb.ToString();
@@ -713,6 +763,48 @@ public class HoverHandler : HoverHandlerBase
         else
         {
             sb.AppendLine("*Defined in this shader*");
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Build hover content for base.Method() calls, showing the base shader's implementation.
+    /// </summary>
+    private static string BuildBaseMethodHoverContent(
+        ShaderMethod method,
+        string definedIn,
+        List<(ShaderMethod Method, string DefinedIn)> allBaseMethods)
+    {
+        var sb = new System.Text.StringBuilder();
+
+        var qualifiers = new List<string>();
+        if (method.IsOverride) qualifiers.Add("override");
+        if (method.IsAbstract) qualifiers.Add("abstract");
+        if (method.IsStage) qualifiers.Add("stage");
+
+        var qualifierStr = qualifiers.Any() ? string.Join(" ", qualifiers) + " " : "";
+        var parameters = string.Join(", ", method.Parameters.Select(p => $"{p.TypeName} {p.Name}"));
+
+        sb.AppendLine("```sdsl");
+        sb.AppendLine($"base.{method.Name}({parameters})");
+        sb.AppendLine("```");
+        sb.AppendLine();
+        sb.AppendLine($"Calls **{definedIn}**.{method.Name}()");
+
+        // If there are multiple base implementations, show them
+        if (allBaseMethods.Count > 1)
+        {
+            sb.AppendLine();
+            sb.AppendLine("*Further base implementations:*");
+            foreach (var (m, shader) in allBaseMethods.Skip(1).Take(3))
+            {
+                sb.AppendLine($"- {shader}");
+            }
+            if (allBaseMethods.Count > 4)
+            {
+                sb.AppendLine($"- *...and {allBaseMethods.Count - 4} more*");
+            }
         }
 
         return sb.ToString();

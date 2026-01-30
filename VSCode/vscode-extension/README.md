@@ -12,6 +12,12 @@ Full IntelliSense for SDSL shaders. Write shaders faster with inheritance-aware 
 - **HLSL intrinsics** — 100+ functions with signatures (`lerp`, `saturate`, `dot`, `Sample`, etc.)
 - **Full type library** — Vectors, matrices, textures, samplers, buffers
 
+### Navigation
+
+- **F12 / Ctrl+Click** — Go to definition for shaders, variables, methods, and structs
+- **Ctrl+Click on shader names** — Jump to base shader files (even external Stride/vvvv shaders)
+- **Ctrl+Click on method calls** — Jump to method definitions in inheritance chain
+
 ### Rich Hover Info
 
 Hover over any identifier to see detailed information:

@@ -418,19 +418,29 @@ public class ShaderWorkspace
 
         try
         {
-            var latestGammaDir = Directory.GetDirectories(vvvvBaseDir)
+            // Get all vvvv_gamma_* directories and parse their versions
+            var gammaInstalls = Directory.GetDirectories(vvvvBaseDir)
                 .Where(d => Path.GetFileName(d).StartsWith("vvvv_gamma_", StringComparison.OrdinalIgnoreCase))
-                .OrderByDescending(d => d)
-                .FirstOrDefault();
+                .Select(d => new { Path = d, Version = ParseVvvvVersion(Path.GetFileName(d)) })
+                .Where(v => v.Version != null)  // Filter out unparseable/special versions
+                .ToList();
 
-            if (latestGammaDir == null)
+            if (gammaInstalls.Count == 0)
             {
-                _logger.LogInformation("No vvvv_gamma_* installation found");
+                _logger.LogInformation("No valid vvvv_gamma_* installation found");
                 return paths;
             }
 
-            var vvvvVersion = Path.GetFileName(latestGammaDir); // e.g., "vvvv_gamma_6.8"
-            _logger.LogInformation("Using vvvv installation: {Path}", latestGammaDir);
+            // Pick the highest version (preview is typically newer than stable of same major.minor)
+            var latestInstall = gammaInstalls
+                .OrderByDescending(v => v.Version!.Major)
+                .ThenByDescending(v => v.Version!.Minor)
+                .ThenByDescending(v => v.Version!.PreviewNumber ?? -1)  // Preview > Stable for same version
+                .First();
+
+            var latestGammaDir = latestInstall.Path;
+            var vvvvVersion = latestInstall.Version!.ToDisplayString();  // e.g., "vvvv@7.0" or "vvvv@7.1-144"
+            _logger.LogInformation("Using vvvv installation: {Path} (version: {Version})", latestGammaDir, vvvvVersion);
 
             // Check packs directory
             var packsDir = Path.Combine(latestGammaDir, "packs");
@@ -489,7 +499,88 @@ public class ShaderWorkspace
         return paths;
     }
 
+    /// <summary>
+    /// Parse a vvvv gamma directory name into version components.
+    /// Filters out special versions like "-hdr" and handles stable vs preview.
+    /// </summary>
+    /// <param name="dirName">Directory name like "vvvv_gamma_7.0" or "vvvv_gamma_7.1-0144-g5b48859314-win-x64"</param>
+    /// <returns>Parsed version info, or null if this is a special/invalid version to skip</returns>
+    private static VvvvVersion? ParseVvvvVersion(string dirName)
+    {
+        // Skip special versions (e.g., vvvv_gamma_7.1-hdr-0002-...)
+        var specialVersions = new[] { "-hdr", "-beta", "-alpha", "-rc", "-test", "-dev" };
+        if (specialVersions.Any(s => dirName.Contains(s, StringComparison.OrdinalIgnoreCase)))
+        {
+            return null;
+        }
+
+        // Expected format: vvvv_gamma_MAJOR.MINOR[-PREVIEW-HASH-PLATFORM]
+        // Examples:
+        //   vvvv_gamma_7.0
+        //   vvvv_gamma_6.8
+        //   vvvv_gamma_7.1-0144-g5b48859314-win-x64
+        var prefix = "vvvv_gamma_";
+        if (!dirName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var versionPart = dirName.Substring(prefix.Length);
+
+        // Split by dash to separate version from preview/hash/platform
+        var parts = versionPart.Split('-');
+        var mainVersion = parts[0];  // "7.0" or "7.1"
+
+        var versionParts = mainVersion.Split('.');
+        if (versionParts.Length < 2)
+            return null;
+
+        if (!int.TryParse(versionParts[0], out var major))
+            return null;
+        if (!int.TryParse(versionParts[1], out var minor))
+            return null;
+
+        // Check if it's a preview version (has additional parts after version)
+        int? previewNumber = null;
+        if (parts.Length > 1)
+        {
+            // Second part should be the preview number (e.g., "0144")
+            if (int.TryParse(parts[1], out var preview))
+            {
+                previewNumber = preview;
+            }
+        }
+
+        return new VvvvVersion(major, minor, previewNumber);
+    }
+
     #endregion
+}
+
+/// <summary>
+/// Parsed vvvv gamma version information.
+/// </summary>
+public class VvvvVersion
+{
+    public int Major { get; }
+    public int Minor { get; }
+    public int? PreviewNumber { get; }
+    public bool IsPreview => PreviewNumber.HasValue;
+
+    public VvvvVersion(int major, int minor, int? previewNumber = null)
+    {
+        Major = major;
+        Minor = minor;
+        PreviewNumber = previewNumber;
+    }
+
+    /// <summary>
+    /// Returns a display string like "vvvv@7.0" or "vvvv@7.1-144"
+    /// </summary>
+    public string ToDisplayString()
+    {
+        if (IsPreview)
+            return $"vvvv@{Major}.{Minor}-{PreviewNumber}";
+        return $"vvvv@{Major}.{Minor}";
+    }
 }
 
 /// <summary>

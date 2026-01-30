@@ -11,7 +11,7 @@ using StrideShaderLanguageServer.Services;
 
 namespace StrideShaderLanguageServer.Handlers;
 
-public class TextDocumentSyncHandler : TextDocumentSyncHandlerBase
+public class TextDocumentSyncHandler : TextDocumentSyncHandlerBase, IDisposable
 {
     private readonly ILogger<TextDocumentSyncHandler> _logger;
     private readonly ShaderWorkspace _workspace;
@@ -22,7 +22,18 @@ public class TextDocumentSyncHandler : TextDocumentSyncHandlerBase
 
     // Debouncing: delay diagnostics until user stops typing
     private readonly Dictionary<DocumentUri, CancellationTokenSource> _diagnosticDebounce = new();
-    private const int DiagnosticDelayMs = 500; // Wait 500ms after last keystroke
+    private int _diagnosticDelayMs = 3000; // Default: wait 3 seconds after last keystroke
+
+    private bool _disposed;
+
+    /// <summary>
+    /// Set the diagnostics delay from client settings.
+    /// </summary>
+    public void SetDiagnosticsDelay(int delayMs)
+    {
+        _diagnosticDelayMs = Math.Clamp(delayMs, 500, 10000);
+        _logger.LogInformation("Diagnostics delay configured to {DelayMs}ms", _diagnosticDelayMs);
+    }
 
     public TextDocumentSyncHandler(
         ILogger<TextDocumentSyncHandler> logger,
@@ -59,7 +70,7 @@ public class TextDocumentSyncHandler : TextDocumentSyncHandlerBase
         return Unit.Task;
     }
 
-    public override Task<Unit> Handle(DidChangeTextDocumentParams request, CancellationToken cancellationToken)
+    public override async Task<Unit> Handle(DidChangeTextDocumentParams request, CancellationToken cancellationToken)
     {
         var uri = request.TextDocument.Uri;
 
@@ -78,7 +89,7 @@ public class TextDocumentSyncHandler : TextDocumentSyncHandlerBase
             // Debounce diagnostics - cancel any pending update for this document
             if (_diagnosticDebounce.TryGetValue(uri, out var existingCts))
             {
-                existingCts.Cancel();
+                await existingCts.CancelAsync();
                 existingCts.Dispose();
             }
 
@@ -90,7 +101,7 @@ public class TextDocumentSyncHandler : TextDocumentSyncHandlerBase
             {
                 try
                 {
-                    await Task.Delay(DiagnosticDelayMs, cts.Token);
+                    await Task.Delay(_diagnosticDelayMs, cts.Token);
 
                     // Only publish if not cancelled
                     if (!cts.Token.IsCancellationRequested)
@@ -105,7 +116,7 @@ public class TextDocumentSyncHandler : TextDocumentSyncHandlerBase
             }, cts.Token);
         }
 
-        return Unit.Task;
+        return Unit.Value;
     }
 
     public override Task<Unit> Handle(DidSaveTextDocumentParams request, CancellationToken cancellationToken)
@@ -114,7 +125,7 @@ public class TextDocumentSyncHandler : TextDocumentSyncHandlerBase
         return Unit.Task;
     }
 
-    public override Task<Unit> Handle(DidCloseTextDocumentParams request, CancellationToken cancellationToken)
+    public override async Task<Unit> Handle(DidCloseTextDocumentParams request, CancellationToken cancellationToken)
     {
         var uri = request.TextDocument.Uri;
         _logger.LogDebug("Document closed: {Uri}", uri);
@@ -123,12 +134,12 @@ public class TextDocumentSyncHandler : TextDocumentSyncHandlerBase
         // Clean up any pending diagnostic update
         if (_diagnosticDebounce.TryGetValue(uri, out var cts))
         {
-            cts.Cancel();
+            await cts.CancelAsync();
             cts.Dispose();
             _diagnosticDebounce.Remove(uri);
         }
 
-        return Unit.Task;
+        return Unit.Value;
     }
 
     public string? GetDocumentContent(DocumentUri uri)
@@ -200,5 +211,31 @@ public class TextDocumentSyncHandler : TextDocumentSyncHandlerBase
             Change = TextDocumentSyncKind.Full,
             Save = new SaveOptions { IncludeText = true }
         };
+    }
+
+    /// <summary>
+    /// Clean up all pending diagnostic tasks on shutdown.
+    /// </summary>
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+
+        _logger.LogDebug("Disposing TextDocumentSyncHandler, cancelling {Count} pending diagnostic tasks", _diagnosticDebounce.Count);
+
+        foreach (var cts in _diagnosticDebounce.Values)
+        {
+            try
+            {
+                cts.Cancel();
+                cts.Dispose();
+            }
+            catch
+            {
+                // Ignore disposal errors during shutdown
+            }
+        }
+        _diagnosticDebounce.Clear();
+        _documentContents.Clear();
     }
 }

@@ -29,7 +29,9 @@ public record MemberInfo(
     int Line,
     string FilePath,
     bool IsLocal,
-    string SourceShader  // Which shader this member comes from
+    string SourceShader,  // Which shader this member comes from
+    bool IsStage,  // Whether this member has the 'stage' qualifier
+    bool IsEntryPoint  // Whether this method is a shader stage entry point (VSMain, PSMain, etc.)
 );
 
 public record MemberGroup(

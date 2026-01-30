@@ -7,12 +7,7 @@ import {
     type ServerOptions,
     TransportKind,
 } from 'vscode-languageclient/node';
-import {
-    InheritanceTreeProvider,
-    VariablesTreeProvider,
-    MethodsTreeProvider,
-    StreamsTreeProvider,
-} from './panels';
+import { UnifiedTreeProvider } from './panels';
 import {
     ExternalShaderProvider,
     EXTERNAL_SHADER_SCHEME,
@@ -23,11 +18,8 @@ const EXTENSION_ID = 'tebjan.stride-shader-tools';
 
 let client: LanguageClient | undefined;
 
-// TreeView providers (initialized after language server starts)
-let inheritanceProvider: InheritanceTreeProvider;
-let variablesProvider: VariablesTreeProvider;
-let methodsProvider: MethodsTreeProvider;
-let streamsProvider: StreamsTreeProvider;
+// Unified TreeView provider (initialized after language server starts)
+let unifiedTreeProvider: UnifiedTreeProvider;
 
 // Regex to detect each "Add: ShaderName" pattern in hover content (global)
 const ADD_SHADER_REGEX = /Add:\s+(\w+)/g;
@@ -89,65 +81,38 @@ export async function activate(context: vscode.ExtensionContext) {
     // Command to refresh all panels
     context.subscriptions.push(
         vscode.commands.registerCommand('strideShaderTools.refreshPanels', () => {
-            inheritanceProvider?.refresh();
-            variablesProvider?.refresh();
-            methodsProvider?.refresh();
-            streamsProvider?.refresh();
+            unifiedTreeProvider?.refresh();
         })
     );
 
     context.subscriptions.push(
         vscode.commands.registerCommand('strideShaderTools.showInheritanceTree', () => {
-            // Focus on the inheritance panel
-            vscode.commands.executeCommand('strideInheritance.focus');
+            // Focus on the unified shader context panel
+            vscode.commands.executeCommand('strideShaderContext.focus');
         })
     );
 
-    // Initialize TreeView providers (they'll get the client later)
-    inheritanceProvider = new InheritanceTreeProvider(undefined);
-    variablesProvider = new VariablesTreeProvider(undefined);
-    methodsProvider = new MethodsTreeProvider(undefined);
-    streamsProvider = new StreamsTreeProvider(undefined);
+    // Initialize unified TreeView provider (it will get the client later)
+    unifiedTreeProvider = new UnifiedTreeProvider(undefined);
 
-    // Register TreeViews
+    // Register unified TreeView
     context.subscriptions.push(
-        vscode.window.createTreeView('strideInheritance', {
-            treeDataProvider: inheritanceProvider,
-            showCollapseAll: true,
-        })
-    );
-    context.subscriptions.push(
-        vscode.window.createTreeView('strideStreams', {
-            treeDataProvider: streamsProvider,
-            showCollapseAll: true,
-        })
-    );
-    context.subscriptions.push(
-        vscode.window.createTreeView('strideVariables', {
-            treeDataProvider: variablesProvider,
-            showCollapseAll: true,
-        })
-    );
-    context.subscriptions.push(
-        vscode.window.createTreeView('strideMethods', {
-            treeDataProvider: methodsProvider,
+        vscode.window.createTreeView('strideShaderContext', {
+            treeDataProvider: unifiedTreeProvider,
             showCollapseAll: true,
         })
     );
 
-    // Refresh panels when active editor changes to an SDSL file
+    // Refresh panel when active editor changes to an SDSL file
     context.subscriptions.push(
         vscode.window.onDidChangeActiveTextEditor(editor => {
             if (editor?.document.languageId === 'sdsl') {
-                inheritanceProvider.refresh();
-                variablesProvider.refresh();
-                methodsProvider.refresh();
-                streamsProvider.refresh();
+                unifiedTreeProvider.refresh();
             }
         })
     );
 
-    // Refresh panels when document content changes (e.g., after adding base shader)
+    // Soft refresh panel when document content changes (preserves tree expansion)
     context.subscriptions.push(
         vscode.workspace.onDidChangeTextDocument(event => {
             if (event.document.languageId === 'sdsl' &&
@@ -155,10 +120,8 @@ export async function activate(context: vscode.ExtensionContext) {
                 // Debounce: only refresh after user stops typing
                 clearTimeout((globalThis as any).__sdslRefreshTimeout);
                 (globalThis as any).__sdslRefreshTimeout = setTimeout(() => {
-                    inheritanceProvider.refresh();
-                    variablesProvider.refresh();
-                    methodsProvider.refresh();
-                    streamsProvider.refresh();
+                    // Use soft refresh to preserve tree expansion state
+                    unifiedTreeProvider.softRefresh();
                 }, 500); // 500ms debounce
             }
         })
@@ -403,6 +366,7 @@ async function startLanguageServer(context: vscode.ExtensionContext): Promise<vo
 
     // Get additional shader paths from config
     const additionalPaths = config.get<string[]>('shaderPaths') || [];
+    const diagnosticsDelay = config.get<number>('diagnostics.delay') || 3000;
 
     // Client options with middleware to enhance hover with clickable links
     const clientOptions: LanguageClientOptions = {
@@ -416,6 +380,7 @@ async function startLanguageServer(context: vscode.ExtensionContext): Promise<vo
         initializationOptions: {
             additionalShaderPaths: additionalPaths,
             workspaceFolders: vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath) || [],
+            diagnosticsDelayMs: diagnosticsDelay,
         },
         outputChannelName: 'Stride Shader Language Server',
         middleware: {
@@ -447,20 +412,14 @@ async function startLanguageServer(context: vscode.ExtensionContext): Promise<vo
         const state = client.state;
         console.log('[LSP] Client state after start:', state);
 
-        // Set the client on all TreeView providers now that it's ready
-        inheritanceProvider.setClient(client);
-        variablesProvider.setClient(client);
-        methodsProvider.setClient(client);
-        streamsProvider.setClient(client);
-        console.log('[LSP] TreeView providers connected to client');
+        // Set the client on the unified TreeView provider now that it's ready
+        unifiedTreeProvider.setClient(client);
+        console.log('[LSP] TreeView provider connected to client');
 
         // Initial refresh if there's an active SDSL editor
         if (vscode.window.activeTextEditor?.document.languageId === 'sdsl') {
-            console.log('[LSP] Active SDSL editor found, refreshing panels');
-            inheritanceProvider.refresh();
-            variablesProvider.refresh();
-            methodsProvider.refresh();
-            streamsProvider.refresh();
+            console.log('[LSP] Active SDSL editor found, refreshing panel');
+            unifiedTreeProvider.refresh();
         }
     } catch (error) {
         console.error('[LSP] Failed to start language server:', error);
@@ -596,6 +555,9 @@ async function openShaderFile(filePath: string, line?: number, isWorkspaceShader
 }
 
 export function deactivate(): Thenable<void> | undefined {
+    // Clear any pending refresh timeout
+    clearTimeout((globalThis as any).__sdslRefreshTimeout);
+
     if (!client) {
         return undefined;
     }

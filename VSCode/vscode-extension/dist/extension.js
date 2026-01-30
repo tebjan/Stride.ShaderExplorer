@@ -6682,8 +6682,8 @@ var require_protocolCodeAction = __commonJS({
   "node_modules/vscode-languageclient/lib/common/protocolCodeAction.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
-    var vscode7 = require("vscode");
-    var ProtocolCodeAction = class extends vscode7.CodeAction {
+    var vscode4 = require("vscode");
+    var ProtocolCodeAction = class extends vscode4.CodeAction {
       constructor(title, data) {
         super(title);
         this.data = data;
@@ -6699,7 +6699,7 @@ var require_protocolDiagnostic = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ProtocolDiagnostic = exports2.DiagnosticCode = void 0;
-    var vscode7 = require("vscode");
+    var vscode4 = require("vscode");
     var Is = require_is();
     var DiagnosticCode;
     (function(DiagnosticCode2) {
@@ -6709,7 +6709,7 @@ var require_protocolDiagnostic = __commonJS({
       }
       DiagnosticCode2.is = is;
     })(DiagnosticCode || (exports2.DiagnosticCode = DiagnosticCode = {}));
-    var ProtocolDiagnostic = class extends vscode7.Diagnostic {
+    var ProtocolDiagnostic = class extends vscode4.Diagnostic {
       constructor(range, message, severity, data) {
         super(range, message, severity);
         this.data = data;
@@ -10713,7 +10713,7 @@ var require_notebook = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.NotebookDocumentSyncFeature = void 0;
-    var vscode7 = require("vscode");
+    var vscode4 = require("vscode");
     var minimatch = require_minimatch();
     var proto = require_main3();
     var UUID = require_uuid();
@@ -10768,9 +10768,9 @@ var require_notebook = __commonJS({
         c2p2.asNotebookCell = asNotebookCell;
         function asNotebookCellKind(kind) {
           switch (kind) {
-            case vscode7.NotebookCellKind.Markup:
+            case vscode4.NotebookCellKind.Markup:
               return proto.NotebookCellKind.Markup;
-            case vscode7.NotebookCellKind.Code:
+            case vscode4.NotebookCellKind.Code:
               return proto.NotebookCellKind.Code;
           }
         }
@@ -11021,25 +11021,25 @@ var require_notebook = __commonJS({
         this.notebookDidOpen = /* @__PURE__ */ new Set();
         this.disposables = [];
         this.selector = client2.protocol2CodeConverter.asDocumentSelector($NotebookDocumentSyncOptions.asDocumentSelector(options));
-        vscode7.workspace.onDidOpenNotebookDocument((notebookDocument) => {
+        vscode4.workspace.onDidOpenNotebookDocument((notebookDocument) => {
           this.notebookDidOpen.add(notebookDocument.uri.toString());
           this.didOpen(notebookDocument);
         }, void 0, this.disposables);
-        for (const notebookDocument of vscode7.workspace.notebookDocuments) {
+        for (const notebookDocument of vscode4.workspace.notebookDocuments) {
           this.notebookDidOpen.add(notebookDocument.uri.toString());
           this.didOpen(notebookDocument);
         }
-        vscode7.workspace.onDidChangeNotebookDocument((event) => this.didChangeNotebookDocument(event), void 0, this.disposables);
+        vscode4.workspace.onDidChangeNotebookDocument((event) => this.didChangeNotebookDocument(event), void 0, this.disposables);
         if (this.options.save === true) {
-          vscode7.workspace.onDidSaveNotebookDocument((notebookDocument) => this.didSave(notebookDocument), void 0, this.disposables);
+          vscode4.workspace.onDidSaveNotebookDocument((notebookDocument) => this.didSave(notebookDocument), void 0, this.disposables);
         }
-        vscode7.workspace.onDidCloseNotebookDocument((notebookDocument) => {
+        vscode4.workspace.onDidCloseNotebookDocument((notebookDocument) => {
           this.didClose(notebookDocument);
           this.notebookDidOpen.delete(notebookDocument.uri.toString());
         }, void 0, this.disposables);
       }
       getState() {
-        for (const notebook of vscode7.workspace.notebookDocuments) {
+        for (const notebook of vscode4.workspace.notebookDocuments) {
           const matchingCells = this.getMatchingCells(notebook);
           if (matchingCells !== void 0) {
             return { kind: "document", id: "$internal", registrations: true, matches: true };
@@ -11051,10 +11051,10 @@ var require_notebook = __commonJS({
         return "notebook";
       }
       handles(textDocument) {
-        return vscode7.languages.match(this.selector, textDocument) > 0;
+        return vscode4.languages.match(this.selector, textDocument) > 0;
       }
       didOpenNotebookCellTextDocument(notebookDocument, cell) {
-        if (vscode7.languages.match(this.selector, cell.document) === 0) {
+        if (vscode4.languages.match(this.selector, cell.document) === 0) {
           return;
         }
         if (!this.notebookDidOpen.has(notebookDocument.uri.toString())) {
@@ -11085,7 +11085,7 @@ var require_notebook = __commonJS({
         }
       }
       didChangeNotebookCellTextDocument(notebookDocument, event) {
-        if (vscode7.languages.match(this.selector, event.document) === 0) {
+        if (vscode4.languages.match(this.selector, event.document) === 0) {
           return;
         }
         this.doSendChange({
@@ -11358,7 +11358,7 @@ var require_notebook = __commonJS({
         this.client = client2;
         this.registrations = /* @__PURE__ */ new Map();
         this.registrationType = proto.NotebookDocumentSyncRegistrationType.type;
-        vscode7.workspace.onDidOpenTextDocument((textDocument) => {
+        vscode4.workspace.onDidOpenTextDocument((textDocument) => {
           if (textDocument.uri.scheme !== _NotebookDocumentSyncFeature.CellScheme) {
             return;
           }
@@ -11372,7 +11372,7 @@ var require_notebook = __commonJS({
             }
           }
         });
-        vscode7.workspace.onDidChangeTextDocument((event) => {
+        vscode4.workspace.onDidChangeTextDocument((event) => {
           if (event.contentChanges.length === 0) {
             return;
           }
@@ -11390,7 +11390,7 @@ var require_notebook = __commonJS({
             }
           }
         });
-        vscode7.workspace.onDidCloseTextDocument((textDocument) => {
+        vscode4.workspace.onDidCloseTextDocument((textDocument) => {
           if (textDocument.uri.scheme !== _NotebookDocumentSyncFeature.CellScheme) {
             return;
           }
@@ -11455,7 +11455,7 @@ var require_notebook = __commonJS({
         if (textDocument.uri.scheme !== _NotebookDocumentSyncFeature.CellScheme) {
           return false;
         }
-        if (this.dedicatedChannel !== void 0 && vscode7.languages.match(this.dedicatedChannel, textDocument) > 0) {
+        if (this.dedicatedChannel !== void 0 && vscode4.languages.match(this.dedicatedChannel, textDocument) > 0) {
           return true;
         }
         for (const provider of this.registrations.values()) {
@@ -11475,7 +11475,7 @@ var require_notebook = __commonJS({
       }
       findNotebookDocumentAndCell(textDocument) {
         const uri = textDocument.uri.toString();
-        for (const notebookDocument of vscode7.workspace.notebookDocuments) {
+        for (const notebookDocument of vscode4.workspace.notebookDocuments) {
           for (const cell of notebookDocument.getCells()) {
             if (cell.document.uri.toString() === uri) {
               return [notebookDocument, cell];
@@ -13991,7 +13991,7 @@ var require_semanticTokens = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.SemanticTokensFeature = void 0;
-    var vscode7 = require("vscode");
+    var vscode4 = require("vscode");
     var vscode_languageserver_protocol_1 = require_main3();
     var features_1 = require_features();
     var Is = require_is();
@@ -14069,7 +14069,7 @@ var require_semanticTokens = __commonJS({
         const selector = options.documentSelector;
         const fullProvider = Is.boolean(options.full) ? options.full : options.full !== void 0;
         const hasEditProvider = options.full !== void 0 && typeof options.full !== "boolean" && options.full.delta === true;
-        const eventEmitter = new vscode7.EventEmitter();
+        const eventEmitter = new vscode4.EventEmitter();
         const documentProvider = fullProvider ? {
           onDidChangeSemanticTokens: eventEmitter.event,
           provideDocumentSemanticTokens: (document, token) => {
@@ -14141,12 +14141,12 @@ var require_semanticTokens = __commonJS({
         const legend = client2.protocol2CodeConverter.asSemanticTokensLegend(options.legend);
         const documentSelector = client2.protocol2CodeConverter.asDocumentSelector(selector);
         if (documentProvider !== void 0) {
-          disposables.push(vscode7.languages.registerDocumentSemanticTokensProvider(documentSelector, documentProvider, legend));
+          disposables.push(vscode4.languages.registerDocumentSemanticTokensProvider(documentSelector, documentProvider, legend));
         }
         if (rangeProvider !== void 0) {
-          disposables.push(vscode7.languages.registerDocumentRangeSemanticTokensProvider(documentSelector, rangeProvider, legend));
+          disposables.push(vscode4.languages.registerDocumentRangeSemanticTokensProvider(documentSelector, rangeProvider, legend));
         }
-        return [new vscode7.Disposable(() => disposables.forEach((item) => item.dispose())), { range: rangeProvider, full: documentProvider, onDidChangeSemanticTokensEmitter: eventEmitter }];
+        return [new vscode4.Disposable(() => disposables.forEach((item) => item.dispose())), { range: rangeProvider, full: documentProvider, onDidChangeSemanticTokensEmitter: eventEmitter }];
       }
     };
     exports2.SemanticTokensFeature = SemanticTokensFeature;
@@ -18014,343 +18014,286 @@ __export(extension_exports, {
 module.exports = __toCommonJS(extension_exports);
 var fs2 = __toESM(require("node:fs"));
 var path = __toESM(require("node:path"));
-var vscode6 = __toESM(require("vscode"));
+var vscode3 = __toESM(require("vscode"));
 var import_node = __toESM(require_node3());
 
-// src/panels/InheritanceTreeProvider.ts
+// src/panels/UnifiedTreeProvider.ts
 var vscode = __toESM(require("vscode"));
-var InheritanceTreeProvider = class {
+var UnifiedTreeProvider = class {
   constructor(client2) {
     this.client = client2;
   }
   _onDidChangeTreeData = new vscode.EventEmitter();
   onDidChangeTreeData = this._onDidChangeTreeData.event;
-  cachedData = null;
+  cachedInheritance = null;
+  cachedMembers = null;
   currentUri = null;
   setClient(client2) {
     this.client = client2;
   }
+  /**
+   * Full refresh - rebuilds entire tree (use when switching files).
+   */
   refresh() {
-    this.cachedData = null;
+    this.cachedInheritance = null;
+    this.cachedMembers = null;
+    this._onDidChangeTreeData.fire(void 0);
+  }
+  /**
+   * Soft refresh - invalidates cache and updates visible data.
+   * Note: VS Code TreeView doesn't preserve expansion state well, so this
+   * behaves similar to full refresh. The debounce in extension.ts helps
+   * minimize disruption while typing.
+   */
+  softRefresh() {
+    this.cachedInheritance = null;
+    this.cachedMembers = null;
     this._onDidChangeTreeData.fire(void 0);
   }
   getTreeItem(element) {
-    const item = new vscode.TreeItem(
-      element.name,
-      element.isCurrentShader ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None
-    );
-    item.description = element.source;
-    item.tooltip = new vscode.MarkdownString();
-    item.tooltip.appendMarkdown(`**${element.name}**
-
-`);
-    item.tooltip.appendMarkdown(`Source: ${element.source}
-
-`);
-    item.tooltip.appendMarkdown(`\`${element.filePath}\``);
-    if (element.isCurrentShader) {
-      item.iconPath = new vscode.ThemeIcon("symbol-class");
-    } else {
-      item.iconPath = new vscode.ThemeIcon("symbol-interface");
+    switch (element.type) {
+      case "root":
+        return this.createRootItem(element);
+      case "category":
+        return this.createCategoryItem(element);
+      case "shader":
+        return this.createShaderItem(element);
+      case "member":
+        return this.createMemberItem(element);
     }
-    item.contextValue = element.isCurrentShader ? "currentShader" : "baseShader";
-    if (!element.isCurrentShader) {
+  }
+  createRootItem(element) {
+    const item = new vscode.TreeItem(
+      element.shaderName,
+      vscode.TreeItemCollapsibleState.Expanded
+    );
+    item.iconPath = new vscode.ThemeIcon("symbol-class");
+    item.description = "current shader";
+    item.contextValue = "currentShader";
+    return item;
+  }
+  createCategoryItem(element) {
+    const labels = {
+      inheritance: "Inheritance",
+      streams: "Streams",
+      variables: "Variables",
+      methods: "Methods"
+    };
+    const icons = {
+      inheritance: "type-hierarchy",
+      streams: "pulse",
+      variables: "symbol-variable",
+      methods: "symbol-method"
+    };
+    const label = labels[element.category];
+    const countLabel = element.count > 0 ? ` (${element.count})` : "";
+    const item = new vscode.TreeItem(
+      label + countLabel,
+      vscode.TreeItemCollapsibleState.Collapsed
+    );
+    item.iconPath = new vscode.ThemeIcon(icons[element.category]);
+    item.contextValue = `category-${element.category}`;
+    return item;
+  }
+  createShaderItem(element) {
+    const shader = element.shader;
+    const item = new vscode.TreeItem(
+      shader.name,
+      vscode.TreeItemCollapsibleState.None
+    );
+    item.description = shader.source;
+    item.iconPath = new vscode.ThemeIcon("symbol-interface");
+    item.tooltip = new vscode.MarkdownString();
+    item.tooltip.appendMarkdown(`**${shader.name}**
+
+`);
+    item.tooltip.appendMarkdown(`Source: ${shader.source}
+
+`);
+    item.tooltip.appendMarkdown(`\`${shader.filePath}\``);
+    item.command = {
+      command: "strideShaderTools.openShader",
+      title: "Open Shader",
+      arguments: [shader.filePath, shader.line]
+    };
+    item.contextValue = "baseShader";
+    return item;
+  }
+  createMemberItem(element) {
+    const member = element.member;
+    const stagePrefix = member.isStage ? "stage " : "";
+    let label;
+    if (element.category === "methods") {
+      label = `${stagePrefix}${member.type} ${member.name}${member.signature || "()"}`;
+    } else if (element.category === "streams") {
+      label = `${stagePrefix}${member.type} ${member.name}`;
+    } else {
+      label = `${stagePrefix}${member.type} ${member.name}`;
+    }
+    const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
+    if (member.isEntryPoint) {
+      const stageName = this.getShaderStageName(member.name);
+      item.description = `${member.sourceShader} \u2022 ${stageName}`;
+    } else {
+      item.description = member.sourceShader;
+    }
+    if (member.isEntryPoint) {
+      item.iconPath = new vscode.ThemeIcon("play", new vscode.ThemeColor("charts.green"));
+    } else {
+      const iconMap = {
+        streams: ["symbol-property", "symbol-constant"],
+        variables: ["symbol-field", "symbol-constant"],
+        methods: ["symbol-method", "symbol-function"],
+        inheritance: ["symbol-class", "symbol-interface"]
+      };
+      const [localIcon, inheritedIcon] = iconMap[element.category] || ["symbol-field", "symbol-constant"];
+      item.iconPath = new vscode.ThemeIcon(member.isLocal ? localIcon : inheritedIcon);
+    }
+    item.tooltip = new vscode.MarkdownString();
+    const qualifiers = member.isStage ? "stage " : "";
+    if (element.category === "methods") {
+      item.tooltip.appendCodeblock(`${qualifiers}${member.type} ${member.name}${member.signature}`, "sdsl");
+      if (member.isEntryPoint) {
+        const stageName = this.getShaderStageName(member.name);
+        item.tooltip.appendMarkdown(`
+
+**Shader Stage Entry Point** (${stageName})`);
+      }
+    } else if (element.category === "streams") {
+      item.tooltip.appendCodeblock(`stream ${qualifiers}${member.type} ${member.name}`, "sdsl");
+    } else {
+      item.tooltip.appendCodeblock(`${qualifiers}${member.type} ${member.name}`, "sdsl");
+    }
+    item.tooltip.appendMarkdown(`
+
+Defined in: **${member.sourceShader}**`);
+    if (member.comment) {
+      item.tooltip.appendMarkdown(`
+
+${member.comment}`);
+    }
+    item.contextValue = member.isLocal ? `local${element.category}` : `inherited${element.category}`;
+    if (member.filePath && member.line > 0) {
       item.command = {
         command: "strideShaderTools.openShader",
-        title: "Open Shader",
-        arguments: [element.filePath, element.line]
+        title: "Go to Definition",
+        arguments: [member.filePath, member.line]
       };
     }
     return item;
   }
+  /**
+   * Get the human-readable shader stage name for an entry point method.
+   */
+  getShaderStageName(methodName) {
+    const stages = {
+      "VSMain": "Vertex",
+      "HSMain": "Hull",
+      "HSConstantMain": "Hull Constant",
+      "DSMain": "Domain",
+      "GSMain": "Geometry",
+      "PSMain": "Pixel",
+      "CSMain": "Compute",
+      "ShadeVertex": "Vertex",
+      "ShadePixel": "Pixel"
+    };
+    return stages[methodName] || "Unknown";
+  }
   async getChildren(element) {
     if (!this.client) {
-      console.log("[InheritanceTree] No client available");
       return [];
     }
     const activeEditor = vscode.window.activeTextEditor;
     if (!activeEditor || activeEditor.document.languageId !== "sdsl") {
-      console.log("[InheritanceTree] No active SDSL editor");
       return [];
     }
     const uri = activeEditor.document.uri.toString();
     if (!element) {
-      try {
-        if (this.currentUri !== uri || !this.cachedData) {
-          this.currentUri = uri;
-          console.log("[InheritanceTree] Requesting data for:", uri);
-          const rawResponse = await this.client.sendRequest(
-            "stride/getInheritanceTree",
-            { uri }
-          );
-          console.log("[InheritanceTree] Raw response:", JSON.stringify(rawResponse, null, 2));
-          this.cachedData = rawResponse;
-        }
-        const result = [];
-        const currentShader = this.cachedData?.currentShader ?? this.cachedData?.CurrentShader;
-        if (currentShader) {
-          result.push({
-            ...currentShader,
-            isCurrentShader: true
-          });
-        } else {
-          console.log("[InheritanceTree] No currentShader in response");
-        }
-        return result;
-      } catch (error) {
-        console.error("[InheritanceTree] Failed to get inheritance tree:", error);
+      await this.ensureDataLoaded(uri);
+      const currentShader = this.cachedInheritance?.currentShader;
+      if (!currentShader) {
         return [];
       }
+      return [{
+        type: "root",
+        shaderName: currentShader.name,
+        filePath: currentShader.filePath
+      }];
     }
-    const baseShaders = this.cachedData?.baseShaders ?? this.cachedData?.BaseShaders;
-    if (element.isCurrentShader && baseShaders) {
-      console.log("[InheritanceTree] Returning", baseShaders.length, "base shaders");
-      return baseShaders.map((shader) => ({
-        ...shader,
-        isCurrentShader: false
-      }));
+    if (element.type === "root") {
+      await this.ensureDataLoaded(uri);
+      const inheritanceCount = this.cachedInheritance?.baseShaders?.length ?? 0;
+      const streamsCount = this.cachedMembers?.streams?.length ?? 0;
+      const variablesCount = this.countMembers(this.cachedMembers?.variables ?? []);
+      const methodsCount = this.countMembers(this.cachedMembers?.methods ?? []);
+      return [
+        { type: "category", category: "inheritance", count: inheritanceCount },
+        { type: "category", category: "streams", count: streamsCount },
+        { type: "category", category: "variables", count: variablesCount },
+        { type: "category", category: "methods", count: methodsCount }
+      ];
+    }
+    if (element.type === "category") {
+      await this.ensureDataLoaded(uri);
+      return this.getCategoryChildren(element.category);
     }
     return [];
   }
-  getParent(_element) {
-    return null;
-  }
-};
-
-// src/panels/VariablesTreeProvider.ts
-var vscode2 = __toESM(require("vscode"));
-var VariablesTreeProvider = class {
-  constructor(client2) {
-    this.client = client2;
-  }
-  _onDidChangeTreeData = new vscode2.EventEmitter();
-  onDidChangeTreeData = this._onDidChangeTreeData.event;
-  cachedData = null;
-  currentUri = null;
-  setClient(client2) {
-    this.client = client2;
-  }
-  refresh() {
-    this.cachedData = null;
-    this._onDidChangeTreeData.fire(void 0);
-  }
-  getTreeItem(element) {
-    const varLabel = `${element.type} ${element.name}`;
-    const item = new vscode2.TreeItem(varLabel, vscode2.TreeItemCollapsibleState.None);
-    item.description = element.sourceShader;
-    item.tooltip = new vscode2.MarkdownString();
-    item.tooltip.appendCodeblock(`${element.type} ${element.name}`, "sdsl");
-    item.tooltip.appendMarkdown(`
-
-Defined in: **${element.sourceShader}**`);
-    if (element.comment) {
-      item.tooltip.appendMarkdown(`
-
-${element.comment}`);
+  async ensureDataLoaded(uri) {
+    if (this.currentUri === uri && this.cachedInheritance && this.cachedMembers) {
+      return;
     }
-    item.iconPath = new vscode2.ThemeIcon(
-      element.isLocal ? "symbol-field" : "symbol-constant"
-    );
-    item.contextValue = element.isLocal ? "localVariable" : "inheritedVariable";
-    if (element.filePath && element.line > 0) {
-      item.command = {
-        command: "strideShaderTools.openShader",
-        title: "Go to Definition",
-        arguments: [element.filePath, element.line]
-      };
-    }
-    return item;
-  }
-  async getChildren(_element) {
-    if (!this.client) {
-      console.log("[Variables] No client available");
-      return [];
-    }
-    const activeEditor = vscode2.window.activeTextEditor;
-    if (!activeEditor || activeEditor.document.languageId !== "sdsl") {
-      console.log("[Variables] No active SDSL editor");
-      return [];
-    }
-    const uri = activeEditor.document.uri.toString();
+    this.currentUri = uri;
     try {
-      if (this.currentUri !== uri || !this.cachedData) {
-        this.currentUri = uri;
-        console.log("[Variables] Requesting shader members for:", uri);
-        this.cachedData = await this.client.sendRequest(
-          "stride/getShaderMembers",
-          { uri }
-        );
-        console.log("[Variables] Response variables:", this.cachedData?.variables?.length ?? 0);
-      }
-      const allVariables = [];
-      for (const group of this.cachedData?.variables ?? []) {
-        allVariables.push(...group.members);
-      }
-      allVariables.sort((a, b) => {
-        if (a.isLocal !== b.isLocal) {
-          return a.isLocal ? -1 : 1;
-        }
-        return a.name.localeCompare(b.name);
-      });
-      return allVariables;
+      const [inheritanceRaw, membersRaw] = await Promise.all([
+        this.client.sendRequest("stride/getInheritanceTree", { uri }),
+        this.client.sendRequest("stride/getShaderMembers", { uri })
+      ]);
+      this.cachedInheritance = inheritanceRaw;
+      this.cachedMembers = membersRaw;
     } catch (error) {
-      console.error("[Variables] Failed to get shader members:", error);
-      return [];
+      console.error("[UnifiedTree] Failed to load data:", error);
+      this.cachedInheritance = null;
+      this.cachedMembers = null;
     }
   }
-  getParent(_element) {
-    return null;
-  }
-};
-
-// src/panels/MethodsTreeProvider.ts
-var vscode3 = __toESM(require("vscode"));
-var MethodsTreeProvider = class {
-  constructor(client2) {
-    this.client = client2;
-  }
-  _onDidChangeTreeData = new vscode3.EventEmitter();
-  onDidChangeTreeData = this._onDidChangeTreeData.event;
-  cachedData = null;
-  currentUri = null;
-  setClient(client2) {
-    this.client = client2;
-  }
-  refresh() {
-    this.cachedData = null;
-    this._onDidChangeTreeData.fire(void 0);
-  }
-  getTreeItem(element) {
-    const methodLabel = `${element.type} ${element.name}${element.signature || "()"}`;
-    const item = new vscode3.TreeItem(methodLabel, vscode3.TreeItemCollapsibleState.None);
-    item.description = element.sourceShader;
-    item.tooltip = new vscode3.MarkdownString();
-    item.tooltip.appendCodeblock(methodLabel, "sdsl");
-    item.tooltip.appendMarkdown(`
-
-Defined in: **${element.sourceShader}**`);
-    if (element.comment) {
-      item.tooltip.appendMarkdown(`
-
-${element.comment}`);
+  getCategoryChildren(category) {
+    switch (category) {
+      case "inheritance":
+        return (this.cachedInheritance?.baseShaders ?? []).map((shader) => ({
+          type: "shader",
+          shader
+        }));
+      case "streams":
+        return this.getSortedMembers(this.cachedMembers?.streams ?? [], "streams");
+      case "variables":
+        return this.getFlattenedMembers(this.cachedMembers?.variables ?? [], "variables");
+      case "methods":
+        return this.getFlattenedMembers(this.cachedMembers?.methods ?? [], "methods");
     }
-    item.iconPath = new vscode3.ThemeIcon(
-      element.isLocal ? "symbol-method" : "symbol-function"
-    );
-    item.contextValue = element.isLocal ? "localMethod" : "inheritedMethod";
-    if (element.filePath && element.line > 0) {
-      item.command = {
-        command: "strideShaderTools.openShader",
-        title: "Go to Definition",
-        arguments: [element.filePath, element.line]
-      };
-    }
-    return item;
   }
-  async getChildren(_element) {
-    if (!this.client) {
-      return [];
-    }
-    const activeEditor = vscode3.window.activeTextEditor;
-    if (!activeEditor || activeEditor.document.languageId !== "sdsl") {
-      return [];
-    }
-    const uri = activeEditor.document.uri.toString();
-    try {
-      if (this.currentUri !== uri || !this.cachedData) {
-        this.currentUri = uri;
-        this.cachedData = await this.client.sendRequest(
-          "stride/getShaderMembers",
-          { uri }
-        );
+  getSortedMembers(members, category) {
+    const sorted = [...members].sort((a, b) => {
+      if (a.isLocal !== b.isLocal) {
+        return a.isLocal ? -1 : 1;
       }
-      const allMethods = [];
-      for (const group of this.cachedData?.methods ?? []) {
-        allMethods.push(...group.members);
-      }
-      allMethods.sort((a, b) => {
-        if (a.isLocal !== b.isLocal) {
-          return a.isLocal ? -1 : 1;
-        }
-        return a.name.localeCompare(b.name);
-      });
-      return allMethods;
-    } catch (error) {
-      console.error("Failed to get shader members:", error);
-      return [];
-    }
+      return a.name.localeCompare(b.name);
+    });
+    return sorted.map((member) => ({
+      type: "member",
+      member,
+      category
+    }));
   }
-  getParent(_element) {
-    return null;
-  }
-};
-
-// src/panels/StreamsTreeProvider.ts
-var vscode4 = __toESM(require("vscode"));
-var StreamsTreeProvider = class {
-  constructor(client2) {
-    this.client = client2;
-  }
-  _onDidChangeTreeData = new vscode4.EventEmitter();
-  onDidChangeTreeData = this._onDidChangeTreeData.event;
-  cachedData = null;
-  currentUri = null;
-  setClient(client2) {
-    this.client = client2;
-  }
-  refresh() {
-    this.cachedData = null;
-    this._onDidChangeTreeData.fire(void 0);
-  }
-  getTreeItem(element) {
-    const streamLabel = `${element.type} ${element.name}`;
-    const item = new vscode4.TreeItem(streamLabel, vscode4.TreeItemCollapsibleState.None);
-    item.description = element.sourceShader;
-    item.tooltip = new vscode4.MarkdownString();
-    item.tooltip.appendCodeblock(`stream ${element.type} ${element.name}`, "sdsl");
-    item.tooltip.appendMarkdown(`
-
-Defined in: **${element.sourceShader}**`);
-    if (element.comment) {
-      item.tooltip.appendMarkdown(`
-
-${element.comment}`);
+  getFlattenedMembers(groups, category) {
+    const allMembers = [];
+    for (const group of groups) {
+      allMembers.push(...group.members);
     }
-    item.iconPath = new vscode4.ThemeIcon(
-      element.isLocal ? "symbol-property" : "symbol-constant"
-    );
-    item.contextValue = element.isLocal ? "localStream" : "inheritedStream";
-    if (element.filePath && element.line > 0) {
-      item.command = {
-        command: "strideShaderTools.openShader",
-        title: "Go to Definition",
-        arguments: [element.filePath, element.line]
-      };
-    }
-    return item;
+    return this.getSortedMembers(allMembers, category);
   }
-  async getChildren(_element) {
-    if (!this.client) {
-      return [];
-    }
-    const activeEditor = vscode4.window.activeTextEditor;
-    if (!activeEditor || activeEditor.document.languageId !== "sdsl") {
-      return [];
-    }
-    const uri = activeEditor.document.uri.toString();
-    try {
-      if (this.currentUri !== uri || !this.cachedData) {
-        this.currentUri = uri;
-        this.cachedData = await this.client.sendRequest(
-          "stride/getShaderMembers",
-          { uri }
-        );
-      }
-      return this.cachedData?.streams ?? [];
-    } catch (error) {
-      console.error("Failed to get shader streams:", error);
-      return [];
-    }
+  countMembers(groups) {
+    return groups.reduce((sum, g) => sum + g.members.length, 0);
   }
   getParent(_element) {
     return null;
@@ -18359,13 +18302,13 @@ ${element.comment}`);
 
 // src/ExternalShaderProvider.ts
 var fs = __toESM(require("node:fs"));
-var vscode5 = __toESM(require("vscode"));
+var vscode2 = __toESM(require("vscode"));
 var EXTERNAL_SHADER_SCHEME = "sdsl-external";
 var ExternalShaderProvider = class {
-  _onDidChangeFile = new vscode5.EventEmitter();
+  _onDidChangeFile = new vscode2.EventEmitter();
   onDidChangeFile = this._onDidChangeFile.event;
   watch() {
-    return new vscode5.Disposable(() => {
+    return new vscode2.Disposable(() => {
     });
   }
   stat(uri) {
@@ -18373,20 +18316,20 @@ var ExternalShaderProvider = class {
     try {
       const stats = fs.statSync(realPath);
       return {
-        type: vscode5.FileType.File,
+        type: vscode2.FileType.File,
         ctime: stats.ctimeMs,
         mtime: stats.mtimeMs,
         size: stats.size
       };
     } catch {
-      throw vscode5.FileSystemError.FileNotFound(uri);
+      throw vscode2.FileSystemError.FileNotFound(uri);
     }
   }
   readDirectory() {
     return [];
   }
   createDirectory() {
-    throw vscode5.FileSystemError.NoPermissions("External shaders are read-only");
+    throw vscode2.FileSystemError.NoPermissions("External shaders are read-only");
   }
   readFile(uri) {
     const realPath = uri.path;
@@ -18394,21 +18337,21 @@ var ExternalShaderProvider = class {
       const content = fs.readFileSync(realPath);
       return content;
     } catch {
-      throw vscode5.FileSystemError.FileNotFound(uri);
+      throw vscode2.FileSystemError.FileNotFound(uri);
     }
   }
   writeFile() {
-    throw vscode5.FileSystemError.NoPermissions("External shaders are read-only");
+    throw vscode2.FileSystemError.NoPermissions("External shaders are read-only");
   }
   delete() {
-    throw vscode5.FileSystemError.NoPermissions("External shaders are read-only");
+    throw vscode2.FileSystemError.NoPermissions("External shaders are read-only");
   }
   rename() {
-    throw vscode5.FileSystemError.NoPermissions("External shaders are read-only");
+    throw vscode2.FileSystemError.NoPermissions("External shaders are read-only");
   }
 };
 function createExternalShaderUri(filePath, lineNumber) {
-  let uri = vscode5.Uri.from({
+  let uri = vscode2.Uri.from({
     scheme: EXTERNAL_SHADER_SCHEME,
     path: filePath
   });
@@ -18421,37 +18364,34 @@ function createExternalShaderUri(filePath, lineNumber) {
 // src/extension.ts
 var EXTENSION_ID = "tebjan.stride-shader-tools";
 var client;
-var inheritanceProvider;
-var variablesProvider;
-var methodsProvider;
-var streamsProvider;
+var unifiedTreeProvider;
 var ADD_SHADER_REGEX = /Add:\s+(\w+)/g;
 var REMOVE_SHADER_REGEX = /Remove:\s+(\w+)/g;
 async function activate(context) {
   console.log("Stride Shader Tools is activating...");
   const externalShaderProvider = new ExternalShaderProvider();
   context.subscriptions.push(
-    vscode6.workspace.registerFileSystemProvider(EXTERNAL_SHADER_SCHEME, externalShaderProvider, {
+    vscode3.workspace.registerFileSystemProvider(EXTERNAL_SHADER_SCHEME, externalShaderProvider, {
       isReadonly: true,
       isCaseSensitive: true
     })
   );
   context.subscriptions.push(
-    vscode6.commands.registerCommand("strideShaderTools.restartServer", async () => {
+    vscode3.commands.registerCommand("strideShaderTools.restartServer", async () => {
       if (client) {
         await client.stop();
         await client.start();
-        vscode6.window.showInformationMessage("Stride Shader Language Server restarted.");
+        vscode3.window.showInformationMessage("Stride Shader Language Server restarted.");
       }
     })
   );
   context.subscriptions.push(
-    vscode6.commands.registerCommand("strideShaderTools.openShader", async (filePath, line) => {
+    vscode3.commands.registerCommand("strideShaderTools.openShader", async (filePath, line) => {
       await openShaderFile(filePath, line);
     })
   );
   context.subscriptions.push(
-    vscode6.commands.registerCommand("strideShaderTools.openShaderLink", async (encodedArgs) => {
+    vscode3.commands.registerCommand("strideShaderTools.openShaderLink", async (encodedArgs) => {
       try {
         const args = decodeURIComponent(encodedArgs);
         const [filePath, isWorkspaceStr] = args.split("|");
@@ -18463,72 +18403,42 @@ async function activate(context) {
     })
   );
   context.subscriptions.push(
-    vscode6.commands.registerCommand("strideShaderTools.refreshPanels", () => {
-      inheritanceProvider?.refresh();
-      variablesProvider?.refresh();
-      methodsProvider?.refresh();
-      streamsProvider?.refresh();
+    vscode3.commands.registerCommand("strideShaderTools.refreshPanels", () => {
+      unifiedTreeProvider?.refresh();
     })
   );
   context.subscriptions.push(
-    vscode6.commands.registerCommand("strideShaderTools.showInheritanceTree", () => {
-      vscode6.commands.executeCommand("strideInheritance.focus");
+    vscode3.commands.registerCommand("strideShaderTools.showInheritanceTree", () => {
+      vscode3.commands.executeCommand("strideShaderContext.focus");
     })
   );
-  inheritanceProvider = new InheritanceTreeProvider(void 0);
-  variablesProvider = new VariablesTreeProvider(void 0);
-  methodsProvider = new MethodsTreeProvider(void 0);
-  streamsProvider = new StreamsTreeProvider(void 0);
+  unifiedTreeProvider = new UnifiedTreeProvider(void 0);
   context.subscriptions.push(
-    vscode6.window.createTreeView("strideInheritance", {
-      treeDataProvider: inheritanceProvider,
+    vscode3.window.createTreeView("strideShaderContext", {
+      treeDataProvider: unifiedTreeProvider,
       showCollapseAll: true
     })
   );
   context.subscriptions.push(
-    vscode6.window.createTreeView("strideStreams", {
-      treeDataProvider: streamsProvider,
-      showCollapseAll: true
-    })
-  );
-  context.subscriptions.push(
-    vscode6.window.createTreeView("strideVariables", {
-      treeDataProvider: variablesProvider,
-      showCollapseAll: true
-    })
-  );
-  context.subscriptions.push(
-    vscode6.window.createTreeView("strideMethods", {
-      treeDataProvider: methodsProvider,
-      showCollapseAll: true
-    })
-  );
-  context.subscriptions.push(
-    vscode6.window.onDidChangeActiveTextEditor((editor) => {
+    vscode3.window.onDidChangeActiveTextEditor((editor) => {
       if (editor?.document.languageId === "sdsl") {
-        inheritanceProvider.refresh();
-        variablesProvider.refresh();
-        methodsProvider.refresh();
-        streamsProvider.refresh();
+        unifiedTreeProvider.refresh();
       }
     })
   );
   context.subscriptions.push(
-    vscode6.workspace.onDidChangeTextDocument((event) => {
-      if (event.document.languageId === "sdsl" && event.document === vscode6.window.activeTextEditor?.document) {
+    vscode3.workspace.onDidChangeTextDocument((event) => {
+      if (event.document.languageId === "sdsl" && event.document === vscode3.window.activeTextEditor?.document) {
         clearTimeout(globalThis.__sdslRefreshTimeout);
         globalThis.__sdslRefreshTimeout = setTimeout(() => {
-          inheritanceProvider.refresh();
-          variablesProvider.refresh();
-          methodsProvider.refresh();
-          streamsProvider.refresh();
+          unifiedTreeProvider.softRefresh();
         }, 500);
       }
     })
   );
   context.subscriptions.push(
-    vscode6.commands.registerCommand("strideShaderTools.addBaseShader", async (shaderName) => {
-      const editor = vscode6.window.activeTextEditor;
+    vscode3.commands.registerCommand("strideShaderTools.addBaseShader", async (shaderName) => {
+      const editor = vscode3.window.activeTextEditor;
       if (!editor || editor.document.languageId !== "sdsl") {
         return;
       }
@@ -18537,7 +18447,7 @@ async function activate(context) {
       const shaderDeclRegex = /^(\s*shader\s+\w+)(\s*:\s*)?([\w\s,<>]*?)(\s*)(\{)/m;
       const match = shaderDeclRegex.exec(text);
       if (!match) {
-        vscode6.window.showWarningMessage("Could not find shader declaration in this file.");
+        vscode3.window.showWarningMessage("Could not find shader declaration in this file.");
         return;
       }
       const shaderPart = match[1];
@@ -18554,16 +18464,16 @@ async function activate(context) {
       const endOffset = startOffset + match[0].length;
       const startPos = document.positionAt(startOffset);
       const endPos = document.positionAt(endOffset);
-      const range = new vscode6.Range(startPos, endPos);
+      const range = new vscode3.Range(startPos, endPos);
       await editor.edit((editBuilder) => {
         editBuilder.replace(range, newDeclaration);
       });
-      vscode6.window.showInformationMessage(`Added base shader: ${shaderName}`);
+      vscode3.window.showInformationMessage(`Added base shader: ${shaderName}`);
     })
   );
   context.subscriptions.push(
-    vscode6.commands.registerCommand("strideShaderTools.removeBaseShader", async (shaderName) => {
-      const editor = vscode6.window.activeTextEditor;
+    vscode3.commands.registerCommand("strideShaderTools.removeBaseShader", async (shaderName) => {
+      const editor = vscode3.window.activeTextEditor;
       if (!editor || editor.document.languageId !== "sdsl") {
         return;
       }
@@ -18572,7 +18482,7 @@ async function activate(context) {
       const shaderDeclRegex = /^(\s*shader\s+\w+)(\s*:\s*)([\w\s,<>]+?)(\s*)(\{)/m;
       const match = shaderDeclRegex.exec(text);
       if (!match) {
-        vscode6.window.showWarningMessage("Could not find shader declaration with base shaders.");
+        vscode3.window.showWarningMessage("Could not find shader declaration with base shaders.");
         return;
       }
       const shaderPart = match[1];
@@ -18582,7 +18492,7 @@ async function activate(context) {
       const bases = basesPart.split(",").map((s) => s.trim()).filter((s) => s);
       const newBases = bases.filter((b) => b.toLowerCase() !== shaderName.toLowerCase());
       if (newBases.length === bases.length) {
-        vscode6.window.showWarningMessage(`Base shader '${shaderName}' not found in declaration.`);
+        vscode3.window.showWarningMessage(`Base shader '${shaderName}' not found in declaration.`);
         return;
       }
       let newDeclaration;
@@ -18595,22 +18505,22 @@ async function activate(context) {
       const endOffset = startOffset + match[0].length;
       const startPos = document.positionAt(startOffset);
       const endPos = document.positionAt(endOffset);
-      const range = new vscode6.Range(startPos, endPos);
+      const range = new vscode3.Range(startPos, endPos);
       await editor.edit((editBuilder) => {
         editBuilder.replace(range, newDeclaration);
       });
-      vscode6.window.showInformationMessage(`Removed base shader: ${shaderName}`);
+      vscode3.window.showInformationMessage(`Removed base shader: ${shaderName}`);
     })
   );
   context.subscriptions.push(
-    vscode6.languages.registerHoverProvider("sdsl", new DiagnosticHoverProvider())
+    vscode3.languages.registerHoverProvider("sdsl", new DiagnosticHoverProvider())
   );
   await startLanguageServer(context);
   console.log("Stride Shader Tools activated!");
 }
 async function acquireDotNetRuntime() {
   try {
-    const result = await vscode6.commands.executeCommand(
+    const result = await vscode3.commands.executeCommand(
       "dotnet.acquire",
       {
         version: "8.0",
@@ -18655,7 +18565,7 @@ function createProjectServerOptions(projectPath) {
   };
 }
 async function startLanguageServer(context) {
-  const config = vscode6.workspace.getConfiguration("strideShaderTools");
+  const config = vscode3.workspace.getConfiguration("strideShaderTools");
   const configuredPath = config.get("languageServer.path");
   const bundledDll = path.join(context.extensionPath, "server", "StrideShaderLanguageServer.dll");
   const isProductionMode = fs2.existsSync(bundledDll);
@@ -18663,7 +18573,7 @@ async function startLanguageServer(context) {
   if (configuredPath) {
     const dotnetPath = await acquireDotNetRuntime();
     if (!dotnetPath) {
-      vscode6.window.showErrorMessage(
+      vscode3.window.showErrorMessage(
         "Failed to acquire .NET 8 Runtime. Language server cannot start."
       );
       return;
@@ -18677,7 +18587,7 @@ async function startLanguageServer(context) {
     console.log("Using bundled language server:", bundledDll);
     const dotnetPath = await acquireDotNetRuntime();
     if (!dotnetPath) {
-      vscode6.window.showErrorMessage(
+      vscode3.window.showErrorMessage(
         "Failed to acquire .NET 8 Runtime. Language server cannot start. Please install .NET 8 Runtime manually from https://dotnet.microsoft.com/download/dotnet/8.0"
       );
       return;
@@ -18693,17 +18603,19 @@ async function startLanguageServer(context) {
     serverOptions = createProjectServerOptions(devProjectPath);
   }
   const additionalPaths = config.get("shaderPaths") || [];
+  const diagnosticsDelay = config.get("diagnostics.delay") || 3e3;
   const clientOptions = {
     documentSelector: [
       { scheme: "file", language: "sdsl" },
       { scheme: EXTERNAL_SHADER_SCHEME, language: "sdsl" }
     ],
     synchronize: {
-      fileEvents: vscode6.workspace.createFileSystemWatcher("**/*.sdsl")
+      fileEvents: vscode3.workspace.createFileSystemWatcher("**/*.sdsl")
     },
     initializationOptions: {
       additionalShaderPaths: additionalPaths,
-      workspaceFolders: vscode6.workspace.workspaceFolders?.map((f) => f.uri.fsPath) || []
+      workspaceFolders: vscode3.workspace.workspaceFolders?.map((f) => f.uri.fsPath) || [],
+      diagnosticsDelayMs: diagnosticsDelay
     },
     outputChannelName: "Stride Shader Language Server",
     middleware: {
@@ -18727,21 +18639,15 @@ async function startLanguageServer(context) {
     console.log("[LSP] Language server started successfully");
     const state = client.state;
     console.log("[LSP] Client state after start:", state);
-    inheritanceProvider.setClient(client);
-    variablesProvider.setClient(client);
-    methodsProvider.setClient(client);
-    streamsProvider.setClient(client);
-    console.log("[LSP] TreeView providers connected to client");
-    if (vscode6.window.activeTextEditor?.document.languageId === "sdsl") {
-      console.log("[LSP] Active SDSL editor found, refreshing panels");
-      inheritanceProvider.refresh();
-      variablesProvider.refresh();
-      methodsProvider.refresh();
-      streamsProvider.refresh();
+    unifiedTreeProvider.setClient(client);
+    console.log("[LSP] TreeView provider connected to client");
+    if (vscode3.window.activeTextEditor?.document.languageId === "sdsl") {
+      console.log("[LSP] Active SDSL editor found, refreshing panel");
+      unifiedTreeProvider.refresh();
     }
   } catch (error) {
     console.error("[LSP] Failed to start language server:", error);
-    vscode6.window.showWarningMessage(
+    vscode3.window.showWarningMessage(
       "Failed to start Stride Shader Language Server. IntelliSense may be limited. Check the Output panel for details."
     );
   }
@@ -18757,12 +18663,12 @@ function transformHoverWithClickableLinks(hover) {
     let text;
     if (typeof content === "string") {
       text = content;
-    } else if (content instanceof vscode6.MarkdownString) {
+    } else if (content instanceof vscode3.MarkdownString) {
       text = content.value;
     } else if ("value" in content) {
       text = content.value;
     } else {
-      return new vscode6.MarkdownString(String(content));
+      return new vscode3.MarkdownString(String(content));
     }
     let newText = text.replace(ADD_SHADER_REGEX, (_match, shaderName) => {
       const args = encodeURIComponent(JSON.stringify([shaderName]));
@@ -18774,18 +18680,18 @@ function transformHoverWithClickableLinks(hover) {
       const commandUri = `command:strideShaderTools.removeBaseShader?${args}`;
       return `[Remove ${shaderName}](${commandUri})`;
     });
-    const md = new vscode6.MarkdownString(newText);
+    const md = new vscode3.MarkdownString(newText);
     md.isTrusted = true;
     return md;
   };
   const newContents = hover.contents.map(transformContent);
-  return new vscode6.Hover(newContents, hover.range);
+  return new vscode3.Hover(newContents, hover.range);
 }
 async function openShaderFile(filePath, line, isWorkspaceShader) {
   try {
     let isEditable = isWorkspaceShader;
     if (isEditable === void 0) {
-      const workspaceFolders = vscode6.workspace.workspaceFolders;
+      const workspaceFolders = vscode3.workspace.workspaceFolders;
       if (workspaceFolders) {
         isEditable = workspaceFolders.some(
           (folder) => filePath.toLowerCase().startsWith(folder.uri.fsPath.toLowerCase())
@@ -18796,33 +18702,34 @@ async function openShaderFile(filePath, line, isWorkspaceShader) {
     }
     let uri;
     if (isEditable) {
-      uri = vscode6.Uri.file(filePath);
+      uri = vscode3.Uri.file(filePath);
     } else {
       uri = createExternalShaderUri(filePath, line);
     }
-    const doc = await vscode6.workspace.openTextDocument(uri);
-    const editor = await vscode6.window.showTextDocument(doc, {
-      viewColumn: vscode6.ViewColumn.Active,
+    const doc = await vscode3.workspace.openTextDocument(uri);
+    const editor = await vscode3.window.showTextDocument(doc, {
+      viewColumn: vscode3.ViewColumn.Active,
       preserveFocus: false,
       preview: !isEditable
       // Preview mode for external files (can be replaced by next navigation)
     });
     if (line !== void 0 && line > 0) {
       const lineIndex = line - 1;
-      const range = new vscode6.Range(lineIndex, 0, lineIndex, 0);
-      editor.revealRange(range, vscode6.TextEditorRevealType.InCenter);
-      editor.selection = new vscode6.Selection(range.start, range.start);
+      const range = new vscode3.Range(lineIndex, 0, lineIndex, 0);
+      editor.revealRange(range, vscode3.TextEditorRevealType.InCenter);
+      editor.selection = new vscode3.Selection(range.start, range.start);
     }
     if (!isEditable) {
       const shaderName = path.basename(filePath, ".sdsl");
-      vscode6.window.setStatusBarMessage(`\u{1F4D6} ${shaderName} (External shader - read-only)`, 5e3);
+      vscode3.window.setStatusBarMessage(`\u{1F4D6} ${shaderName} (External shader - read-only)`, 5e3);
     }
   } catch (error) {
     console.error("Failed to open shader file:", error);
-    vscode6.window.showErrorMessage(`Failed to open shader: ${filePath}`);
+    vscode3.window.showErrorMessage(`Failed to open shader: ${filePath}`);
   }
 }
 function deactivate() {
+  clearTimeout(globalThis.__sdslRefreshTimeout);
   if (!client) {
     return void 0;
   }

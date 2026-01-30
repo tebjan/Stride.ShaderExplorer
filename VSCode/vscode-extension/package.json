@@ -44,23 +44,8 @@
     "views": {
       "strideShaderExplorer": [
         {
-          "id": "strideInheritance",
-          "name": "Inheritance",
-          "when": "resourceLangId == sdsl"
-        },
-        {
-          "id": "strideStreams",
-          "name": "Streams",
-          "when": "resourceLangId == sdsl"
-        },
-        {
-          "id": "strideVariables",
-          "name": "Variables",
-          "when": "resourceLangId == sdsl"
-        },
-        {
-          "id": "strideMethods",
-          "name": "Methods",
+          "id": "strideShaderContext",
+          "name": "Shader Context",
           "when": "resourceLangId == sdsl"
         }
       ]
@@ -114,6 +99,13 @@
           ],
           "default": "off",
           "description": "Traces the communication between VS Code and the language server."
+        },
+        "strideShaderTools.diagnostics.delay": {
+          "type": "number",
+          "default": 3000,
+          "minimum": 500,
+          "maximum": 10000,
+          "description": "Delay in milliseconds before showing diagnostics after typing. Higher values reduce noise while typing incomplete code."
         }
       }
     },
@@ -124,7 +116,7 @@
       },
       {
         "command": "strideShaderTools.showInheritanceTree",
-        "title": "Stride Shaders: Show Inheritance Tree"
+        "title": "Stride Shaders: Show Shader Context"
       },
       {
         "command": "strideShaderTools.addBaseShader",

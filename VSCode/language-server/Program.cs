@@ -16,7 +16,11 @@ class Program
     // Static references to services for custom handlers
     private static ShaderWorkspace? _workspace;
     private static InheritanceResolver? _inheritanceResolver;
+    private static TextDocumentSyncHandler? _textDocumentSyncHandler;
     private static ILogger<Program>? _logger;
+
+    // Cancellation token for background tasks
+    private static readonly CancellationTokenSource _shutdownCts = new();
 
     // JSON serializer with camelCase for TypeScript compatibility
     private static readonly JsonSerializer CamelCaseSerializer = JsonSerializer.Create(new JsonSerializerSettings
@@ -41,11 +45,13 @@ class Program
                 .WithHandler<SignatureHelpHandler>()
                 .WithHandler<CodeActionHandler>()
                 .WithHandler<SemanticTokensHandler>()
+                .WithHandler<ShutdownHandler>()
                 .OnInitialize((server, request, token) =>
                 {
                     // Store service references for custom handlers
                     _workspace = server.Services.GetRequiredService<ShaderWorkspace>();
                     _inheritanceResolver = server.Services.GetRequiredService<InheritanceResolver>();
+                    _textDocumentSyncHandler = server.Services.GetRequiredService<TextDocumentSyncHandler>();
                     _logger = server.Services.GetRequiredService<ILogger<Program>>();
 
                     // Initialize workspace with paths from client
@@ -54,6 +60,18 @@ class Program
                         foreach (var folder in folders)
                         {
                             _workspace.AddWorkspaceFolder(folder.Uri.GetFileSystemPath());
+                        }
+                    }
+
+                    // Read initialization options from client
+                    if (request.InitializationOptions is Newtonsoft.Json.Linq.JObject initOptions)
+                    {
+                        // Configure diagnostics delay
+                        if (initOptions.TryGetValue("diagnosticsDelayMs", out var delayToken))
+                        {
+                            var delayMs = delayToken.Value<int>();
+                            _textDocumentSyncHandler.SetDiagnosticsDelay(delayMs);
+                            _logger?.LogInformation("Diagnostics delay set to {DelayMs}ms", delayMs);
                         }
                     }
 
@@ -90,14 +108,38 @@ class Program
 
                     _logger?.LogInformation("Custom panel handlers registered: stride/getInheritanceTree, stride/getShaderMembers");
 
-                    // Start indexing shaders in background
-                    _ = Task.Run(() => _workspace?.IndexAllShaders());
+                    // Start indexing shaders in background (with cancellation support)
+                    _ = Task.Run(() =>
+                    {
+                        if (!_shutdownCts.Token.IsCancellationRequested)
+                        {
+                            _workspace?.IndexAllShaders();
+                        }
+                    }, _shutdownCts.Token);
 
                     return Task.CompletedTask;
                 })
         ).ConfigureAwait(false);
 
         await server.WaitForExit.ConfigureAwait(false);
+
+        // Final cleanup (in case OnShutdown wasn't called)
+        _logger?.LogInformation("Server exiting, final cleanup...");
+
+        // Signal all background tasks to stop
+        if (!_shutdownCts.IsCancellationRequested)
+        {
+            await _shutdownCts.CancelAsync();
+        }
+        _shutdownCts.Dispose();
+
+        // Dispose TextDocumentSyncHandler if not already disposed
+        if (_textDocumentSyncHandler is IDisposable disposable)
+        {
+            disposable.Dispose();
+        }
+
+        _logger?.LogInformation("Server exit complete");
     }
 
     private static InheritanceTreeResponse HandleInheritanceTreeRequest(InheritanceTreeParams request)
@@ -193,7 +235,9 @@ class Program
                     Line: variable.Location.Location.Line,
                     FilePath: filePath,
                     IsLocal: isLocal,
-                    SourceShader: definedIn
+                    SourceShader: definedIn,
+                    IsStage: variable.IsStage,
+                    IsEntryPoint: false  // Variables are never entry points
                 );
 
                 if (variable.IsStream)
@@ -218,6 +262,9 @@ class Program
                 var parameters = string.Join(", ", method.Parameters.Select(p => $"{p.TypeName} {p.Name}"));
                 var signature = $"({parameters})";
 
+                // Check if this is a shader stage entry point
+                var isEntryPoint = IsShaderStageEntryPoint(method.Name);
+
                 var memberInfo = new MemberInfo(
                     Name: method.Name,
                     Type: method.ReturnType,
@@ -226,7 +273,9 @@ class Program
                     Line: method.Location.Location.Line,
                     FilePath: filePath,
                     IsLocal: isLocal,
-                    SourceShader: definedIn
+                    SourceShader: definedIn,
+                    IsStage: method.IsStage,
+                    IsEntryPoint: isEntryPoint
                 );
 
                 if (!methodGroups.ContainsKey(definedIn))
@@ -276,6 +325,31 @@ class Program
         }
     }
 
+    /// <summary>
+    /// Known shader stage entry point method names.
+    /// These are the standard entry points for different shader stages.
+    /// </summary>
+    private static readonly HashSet<string> ShaderStageEntryPoints = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "VSMain",      // Vertex Shader
+        "HSMain",      // Hull Shader (Tessellation Control)
+        "HSConstantMain", // Hull Shader constant function
+        "DSMain",      // Domain Shader (Tessellation Evaluation)
+        "GSMain",      // Geometry Shader
+        "PSMain",      // Pixel/Fragment Shader
+        "CSMain",      // Compute Shader
+        "ShadeVertex", // Alternative vertex shader entry
+        "ShadePixel",  // Alternative pixel shader entry
+    };
+
+    /// <summary>
+    /// Check if a method name is a shader stage entry point.
+    /// </summary>
+    private static bool IsShaderStageEntryPoint(string methodName)
+    {
+        return ShaderStageEntryPoints.Contains(methodName);
+    }
+
     private static void ConfigureServices(IServiceCollection services)
     {
         // Core services
@@ -288,5 +362,8 @@ class Program
 
         // TextDocumentSyncHandler as singleton so other handlers can access document content
         services.AddSingleton<TextDocumentSyncHandler>();
+
+        // Provide the shutdown CancellationTokenSource for cleanup
+        services.AddSingleton(_shutdownCts);
     }
 }
