@@ -98,6 +98,9 @@ public class SemanticValidator
             // Validate base shader references
             ValidateBaseShaders(parsed, sourceCode, diagnostics);
 
+            // Validate override methods have base implementations
+            ValidateOverrideMethods(parsed, sourceCode, diagnostics);
+
             // Build the scope of known identifiers
             var scope = BuildScope(parsed);
 
@@ -113,10 +116,11 @@ public class SemanticValidator
     }
 
     /// <summary>
-    /// Validate that all base shaders exist.
+    /// Validate that all base shaders exist and check for redundant inheritance.
     /// </summary>
     private void ValidateBaseShaders(ParsedShader parsed, string sourceCode, List<Diagnostic> diagnostics)
     {
+        // First pass: check that all base shaders exist
         foreach (var baseName in parsed.BaseShaderNames)
         {
             // Check if we know this shader
@@ -142,6 +146,183 @@ public class SemanticValidator
                 }
             }
         }
+
+        // Second pass: check for redundant base shaders
+        // A base shader is redundant if another direct base already inherits from it
+        CheckRedundantBaseShaders(parsed, sourceCode, diagnostics);
+    }
+
+    /// <summary>
+    /// Check for redundant base shaders that are already transitively inherited via another base.
+    /// Example: if shader inherits from A, B and B inherits from A, then A is redundant.
+    /// </summary>
+    private void CheckRedundantBaseShaders(ParsedShader parsed, string sourceCode, List<Diagnostic> diagnostics)
+    {
+        var baseNames = parsed.BaseShaderNames;
+        if (baseNames.Count < 2)
+            return; // Need at least 2 bases for redundancy
+
+        // Build a map of each base shader -> all shaders it transitively inherits
+        var transitiveInheritance = new Dictionary<string, HashSet<string>>();
+
+        foreach (var baseName in baseNames)
+        {
+            var chain = _inheritanceResolver.ResolveInheritanceChain(baseName);
+            transitiveInheritance[baseName] = new HashSet<string>(
+                chain.Select(s => s.Name),
+                StringComparer.OrdinalIgnoreCase
+            );
+        }
+
+        // Check each base shader to see if it's redundantly inherited via another base
+        foreach (var baseName in baseNames)
+        {
+            foreach (var otherBase in baseNames)
+            {
+                if (string.Equals(baseName, otherBase, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                // If otherBase transitively inherits from baseName, then baseName is redundant
+                if (transitiveInheritance.TryGetValue(otherBase, out var otherChain) &&
+                    otherChain.Contains(baseName))
+                {
+                    var position = FindBaseShaderPosition(sourceCode, baseName);
+                    if (position.HasValue)
+                    {
+                        diagnostics.Add(new Diagnostic
+                        {
+                            Range = new Range(
+                                position.Value.line,
+                                position.Value.col,
+                                position.Value.line,
+                                position.Value.col + baseName.Length
+                            ),
+                            Severity = DiagnosticSeverity.Hint,
+                            Source = "sdsl",
+                            Message = $"Redundant: already inherited via '{otherBase}'",
+                            Tags = new Container<DiagnosticTag>(DiagnosticTag.Unnecessary),
+                            Data = baseName // Store the shader name for quick fix
+                        });
+                    }
+                    break; // Only report once per redundant base
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Find the position of a base shader name in the inheritance list.
+    /// Looks specifically in the "shader Name : Base1, Base2" section.
+    /// </summary>
+    private static (int line, int col)? FindBaseShaderPosition(string sourceCode, string baseName)
+    {
+        var lines = sourceCode.Split('\n');
+        for (int i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i];
+
+            // Look for shader declaration line
+            var colonIndex = line.IndexOf(':');
+            if (colonIndex < 0) continue;
+
+            // Check if this looks like a shader declaration
+            var beforeColon = line.Substring(0, colonIndex);
+            if (!beforeColon.Contains("shader", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            // Search for the base name after the colon
+            var afterColon = line.Substring(colonIndex + 1);
+            var index = afterColon.IndexOf(baseName, StringComparison.Ordinal);
+            if (index < 0) continue;
+
+            // Check word boundaries
+            var beforeOk = index == 0 || !char.IsLetterOrDigit(afterColon[index - 1]);
+            var afterPos = index + baseName.Length;
+            var afterOk = afterPos >= afterColon.Length || !char.IsLetterOrDigit(afterColon[afterPos]);
+
+            if (beforeOk && afterOk)
+            {
+                return (i, colonIndex + 1 + index);
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Validate that override methods have a corresponding method in a base shader.
+    /// </summary>
+    private void ValidateOverrideMethods(ParsedShader parsed, string sourceCode, List<Diagnostic> diagnostics)
+    {
+        foreach (var method in parsed.Methods)
+        {
+            if (!method.IsOverride)
+                continue;
+
+            // Check if any base shader defines this method
+            var baseMethodFound = false;
+            var inheritanceChain = _inheritanceResolver.ResolveInheritanceChain(parsed.Name);
+
+            foreach (var baseShader in inheritanceChain)
+            {
+                if (baseShader.Methods.Any(m => string.Equals(m.Name, method.Name, StringComparison.OrdinalIgnoreCase)))
+                {
+                    baseMethodFound = true;
+                    break;
+                }
+            }
+
+            if (!baseMethodFound)
+            {
+                // Find the position of "override" keyword followed by the method name
+                var position = FindOverrideMethodPosition(sourceCode, method.Name);
+                if (position.HasValue)
+                {
+                    diagnostics.Add(new Diagnostic
+                    {
+                        Range = new Range(
+                            position.Value.line,
+                            position.Value.col,
+                            position.Value.line,
+                            position.Value.col + method.Name.Length
+                        ),
+                        Severity = DiagnosticSeverity.Error,
+                        Source = "sdsl",
+                        Message = $"Method '{method.Name}' is marked as override but no base method found"
+                    });
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Find the position of an override method name in the source code.
+    /// Looks for "override ... methodName(" pattern.
+    /// </summary>
+    private static (int line, int col)? FindOverrideMethodPosition(string sourceCode, string methodName)
+    {
+        var lines = sourceCode.Split('\n');
+        for (int i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i];
+
+            // Look for "override" keyword on this line
+            if (!line.Contains("override", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            // Find the method name followed by '('
+            var pattern = methodName + "(";
+            var index = line.IndexOf(pattern, StringComparison.Ordinal);
+            if (index >= 0)
+            {
+                // Verify it's preceded by word boundary
+                var beforeOk = index == 0 || !char.IsLetterOrDigit(line[index - 1]);
+                if (beforeOk)
+                {
+                    return (i, index);
+                }
+            }
+        }
+        return null;
     }
 
     /// <summary>
@@ -373,6 +554,9 @@ public class SemanticValidator
                     var span = varRef.Span;
                     if (span.Location.Line > 0 || span.Location.Column > 0)
                     {
+                        // Search for shaders that define this identifier
+                        var message = BuildUndefinedMessage(name);
+
                         diagnostics.Add(new Diagnostic
                         {
                             Range = new Range(
@@ -383,7 +567,7 @@ public class SemanticValidator
                             ),
                             Severity = DiagnosticSeverity.Error,
                             Source = "sdsl",
-                            Message = $"'{name}' is not defined"
+                            Message = message
                         });
                     }
                 }
@@ -392,7 +576,37 @@ public class SemanticValidator
             case MemberReferenceExpression memberRef:
                 // Validate the target (e.g., 'streams' in 'streams.ColorTarget')
                 ValidateExpression(memberRef.Target, scope, diagnostics);
-                // Don't validate the member name - it depends on the target's type
+
+                // For stream access (streams.X), validate the member exists
+                if (memberRef.Target is VariableReferenceExpression streamTarget &&
+                    HlslTypeSystem.IsStreamType(streamTarget.Name.Text))
+                {
+                    var memberName = memberRef.Member.Text;
+                    if (!scope.IsDefined(memberName))
+                    {
+                        var span = memberRef.Member.Span;
+                        // Fallback to memberRef span if member span is invalid
+                        if (span.Location.Line <= 0 && span.Location.Column <= 0)
+                            span = memberRef.Span;
+
+                        if (span.Location.Line > 0 || span.Location.Column > 0)
+                        {
+                            var message = BuildUndefinedMessage(memberName);
+                            diagnostics.Add(new Diagnostic
+                            {
+                                Range = new Range(
+                                    Math.Max(0, span.Location.Line - 1),
+                                    Math.Max(0, span.Location.Column - 1),
+                                    Math.Max(0, span.Location.Line - 1),
+                                    Math.Max(0, span.Location.Column - 1 + memberName.Length)
+                                ),
+                                Severity = DiagnosticSeverity.Error,
+                                Source = "sdsl",
+                                Message = message
+                            });
+                        }
+                    }
+                }
                 break;
 
             case MethodInvocationExpression methodCall:
@@ -735,5 +949,14 @@ public class SemanticValidator
 
         // For arrays, we'd need array element type info
         return null;
+    }
+
+    /// <summary>
+    /// Build an error message for an undefined identifier.
+    /// The extension handles displaying clickable quick fix links.
+    /// </summary>
+    private string BuildUndefinedMessage(string name)
+    {
+        return $"'{name}' is not defined";
     }
 }

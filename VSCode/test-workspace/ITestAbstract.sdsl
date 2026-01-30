@@ -1,0 +1,4 @@
+shader ITestAbstract
+{
+    abstract float4 Test(float x);
+};

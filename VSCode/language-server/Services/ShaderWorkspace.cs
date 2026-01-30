@@ -10,7 +10,7 @@ public class ShaderWorkspace
     private readonly ILogger<ShaderWorkspace> _logger;
     private readonly ShaderParser _parser;
     private readonly List<string> _workspaceFolders = new();
-    private readonly List<string> _shaderSearchPaths = new();
+    private readonly List<(string Path, ShaderSource Source)> _shaderSearchPaths = new();
     private readonly Dictionary<string, ShaderInfo> _shadersByName = new();
     private readonly Dictionary<string, ShaderInfo> _shadersByPath = new();
     private readonly Dictionary<string, ParsedShader> _lastValidParse = new();
@@ -41,7 +41,7 @@ public class ShaderWorkspace
     {
         _logger.LogInformation("Discovering shader paths...");
 
-        // 1. NuGet packages cache
+        // 1. NuGet packages cache (Stride core)
         var nugetPath = GetNuGetPackagesPath();
         _logger.LogInformation("NuGet packages path: {Path}", nugetPath ?? "NOT FOUND");
         if (nugetPath != null && Directory.Exists(nugetPath))
@@ -50,7 +50,7 @@ public class ShaderWorkspace
             _logger.LogInformation("Found {Count} Stride NuGet package paths", stridePaths.Count);
             foreach (var path in stridePaths)
             {
-                AddShaderSearchPath(path);
+                AddShaderSearchPath(path, ShaderSource.Stride);
             }
         }
         else
@@ -63,27 +63,27 @@ public class ShaderWorkspace
         _logger.LogInformation("Found {Count} vvvv paths", vvvvPaths.Count);
         foreach (var path in vvvvPaths)
         {
-            AddShaderSearchPath(path);
+            AddShaderSearchPath(path, ShaderSource.Vvvv);
         }
 
-        // 3. Workspace folders
+        // 3. Workspace folders (user's local shaders)
         _logger.LogInformation("Adding {Count} workspace folders", _workspaceFolders.Count);
         foreach (var folder in _workspaceFolders)
         {
-            AddShaderSearchPath(folder);
+            AddShaderSearchPath(folder, ShaderSource.Workspace);
         }
 
         _logger.LogInformation("Discovered {Count} total shader search paths", _shaderSearchPaths.Count);
     }
 
-    private void AddShaderSearchPath(string path)
+    private void AddShaderSearchPath(string path, ShaderSource source)
     {
         lock (_lock)
         {
-            if (!_shaderSearchPaths.Contains(path))
+            if (!_shaderSearchPaths.Any(p => p.Path == path))
             {
-                _shaderSearchPaths.Add(path);
-                _logger.LogInformation("Added shader search path: {Path}", path);
+                _shaderSearchPaths.Add((path, source));
+                _logger.LogInformation("Added shader search path: {Path} (source: {Source})", path, source);
             }
         }
     }
@@ -92,18 +92,21 @@ public class ShaderWorkspace
     {
         _logger.LogInformation("Indexing all shaders...");
 
-        var shaderFiles = new List<string>();
+        var shaderFiles = new List<(string FilePath, ShaderSource Source)>();
 
         lock (_lock)
         {
-            foreach (var searchPath in _shaderSearchPaths)
+            foreach (var (searchPath, source) in _shaderSearchPaths)
             {
                 try
                 {
                     if (Directory.Exists(searchPath))
                     {
                         var files = Directory.EnumerateFiles(searchPath, "*.sdsl", SearchOption.AllDirectories);
-                        shaderFiles.AddRange(files);
+                        foreach (var file in files)
+                        {
+                            shaderFiles.Add((file, source));
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -115,13 +118,13 @@ public class ShaderWorkspace
 
         _logger.LogInformation("Found {Count} shader files", shaderFiles.Count);
 
-        foreach (var file in shaderFiles)
+        foreach (var (file, source) in shaderFiles)
         {
             try
             {
                 var name = Path.GetFileNameWithoutExtension(file);
                 var displayPath = GetDisplayPath(file);
-                var info = new ShaderInfo(name, file, displayPath);
+                var info = new ShaderInfo(name, file, displayPath, source);
 
                 lock (_lock)
                 {
@@ -136,18 +139,6 @@ public class ShaderWorkspace
         }
 
         _logger.LogInformation("Indexed {Count} shaders", _shadersByName.Count);
-
-        // Log some sample shader names for debugging
-        var sampleShaders = _shadersByName.Keys.Take(10).ToList();
-        _logger.LogInformation("Sample indexed shaders: {Shaders}", string.Join(", ", sampleShaders));
-
-        // Check specifically for common base shaders
-        var commonBases = new[] { "ComputeShaderBase", "ShaderBase", "Texturing", "ColorTarget" };
-        foreach (var baseName in commonBases)
-        {
-            var found = _shadersByName.ContainsKey(baseName);
-            _logger.LogInformation("Base shader '{BaseName}': {Status}", baseName, found ? "FOUND" : "NOT FOUND");
-        }
 
         IndexingComplete?.Invoke(this, EventArgs.Empty);
     }
@@ -463,13 +454,25 @@ public class ShaderWorkspace
                     var packageName = Path.GetFileName(package);
                     var displayPrefix = $"{vvvvVersion}/{packageName}";
 
-                    // Search the entire Assets directory (shaders are in various subdirectories)
+                    // First try stride/Assets subfolder (traditional structure)
                     var assetsPath = Path.Combine(package, "stride", "Assets");
                     if (Directory.Exists(assetsPath))
                     {
                         _logger.LogInformation("Found Assets at: {Path}", assetsPath);
                         paths.Add(assetsPath);
                         AddPathDisplayRule(assetsPath, displayPrefix);
+                    }
+                    else
+                    {
+                        // Fallback: search directly in package folder (newer structure)
+                        // Check if there are .sdsl files anywhere in the package
+                        var hasShaders = Directory.EnumerateFiles(package, "*.sdsl", SearchOption.AllDirectories).Any();
+                        if (hasShaders)
+                        {
+                            _logger.LogInformation("Found shaders directly in package: {Path}", package);
+                            paths.Add(package);
+                            AddPathDisplayRule(package, displayPrefix);
+                        }
                     }
                 }
             }
@@ -504,17 +507,32 @@ public class PathDisplayRule
     }
 }
 
+/// <summary>
+/// Source/scope of a shader - used for filtering suggestions.
+/// </summary>
+public enum ShaderSource
+{
+    /// <summary>Stride NuGet packages (core engine shaders)</summary>
+    Stride,
+    /// <summary>vvvv gamma installation (VL.Stride shaders)</summary>
+    Vvvv,
+    /// <summary>Current workspace/project (user's local shaders)</summary>
+    Workspace
+}
+
 public class ShaderInfo
 {
     public string Name { get; }
     public string FilePath { get; }
     public string DisplayPath { get; }
+    public ShaderSource Source { get; }
     public ParsedShader? Parsed { get; set; }
 
-    public ShaderInfo(string name, string filePath, string displayPath)
+    public ShaderInfo(string name, string filePath, string displayPath, ShaderSource source = ShaderSource.Stride)
     {
         Name = name;
         FilePath = filePath;
         DisplayPath = displayPath;
+        Source = source;
     }
 }

@@ -7,11 +7,22 @@ import {
     type ServerOptions,
     TransportKind,
 } from 'vscode-languageclient/node';
-// Hover types are handled via vscode namespace
+import {
+    InheritanceTreeProvider,
+    VariablesTreeProvider,
+    MethodsTreeProvider,
+    StreamsTreeProvider,
+} from './panels';
 
 const EXTENSION_ID = 'tebjan.stride-shader-tools';
 
 let client: LanguageClient | undefined;
+
+// TreeView providers (initialized after language server starts)
+let inheritanceProvider: InheritanceTreeProvider;
+let variablesProvider: VariablesTreeProvider;
+let methodsProvider: MethodsTreeProvider;
+let streamsProvider: StreamsTreeProvider;
 
 // Regex to detect each "Add: ShaderName" pattern in hover content (global)
 const ADD_SHADER_REGEX = /Add:\s+(\w+)/g;
@@ -38,9 +49,86 @@ export async function activate(context: vscode.ExtensionContext) {
         })
     );
 
+    // Command to open a shader file (used by TreeView items)
+    context.subscriptions.push(
+        vscode.commands.registerCommand('strideShaderTools.openShader', async (filePath: string, line?: number) => {
+            try {
+                const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
+                const editor = await vscode.window.showTextDocument(doc, {
+                    viewColumn: vscode.ViewColumn.Beside,
+                    preserveFocus: true,
+                    preview: true,
+                });
+                if (line !== undefined && line > 0) {
+                    const range = new vscode.Range(line - 1, 0, line - 1, 0);
+                    editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+                    editor.selection = new vscode.Selection(range.start, range.start);
+                }
+            } catch (error) {
+                console.error('Failed to open shader:', error);
+                vscode.window.showErrorMessage(`Failed to open shader: ${filePath}`);
+            }
+        })
+    );
+
+    // Command to refresh all panels
+    context.subscriptions.push(
+        vscode.commands.registerCommand('strideShaderTools.refreshPanels', () => {
+            inheritanceProvider?.refresh();
+            variablesProvider?.refresh();
+            methodsProvider?.refresh();
+            streamsProvider?.refresh();
+        })
+    );
+
     context.subscriptions.push(
         vscode.commands.registerCommand('strideShaderTools.showInheritanceTree', () => {
-            vscode.window.showInformationMessage('Inheritance Tree panel coming soon!');
+            // Focus on the inheritance panel
+            vscode.commands.executeCommand('strideInheritance.focus');
+        })
+    );
+
+    // Initialize TreeView providers (they'll get the client later)
+    inheritanceProvider = new InheritanceTreeProvider(undefined);
+    variablesProvider = new VariablesTreeProvider(undefined);
+    methodsProvider = new MethodsTreeProvider(undefined);
+    streamsProvider = new StreamsTreeProvider(undefined);
+
+    // Register TreeViews
+    context.subscriptions.push(
+        vscode.window.createTreeView('strideInheritance', {
+            treeDataProvider: inheritanceProvider,
+            showCollapseAll: true,
+        })
+    );
+    context.subscriptions.push(
+        vscode.window.createTreeView('strideStreams', {
+            treeDataProvider: streamsProvider,
+            showCollapseAll: true,
+        })
+    );
+    context.subscriptions.push(
+        vscode.window.createTreeView('strideVariables', {
+            treeDataProvider: variablesProvider,
+            showCollapseAll: true,
+        })
+    );
+    context.subscriptions.push(
+        vscode.window.createTreeView('strideMethods', {
+            treeDataProvider: methodsProvider,
+            showCollapseAll: true,
+        })
+    );
+
+    // Refresh panels when active editor changes to an SDSL file
+    context.subscriptions.push(
+        vscode.window.onDidChangeActiveTextEditor(editor => {
+            if (editor?.document.languageId === 'sdsl') {
+                inheritanceProvider.refresh();
+                variablesProvider.refresh();
+                methodsProvider.refresh();
+                streamsProvider.refresh();
+            }
         })
     );
 
@@ -311,6 +399,20 @@ async function startLanguageServer(context: vscode.ExtensionContext): Promise<vo
     try {
         await client.start();
         console.log('Stride Shader Language Server started successfully');
+
+        // Set the client on all TreeView providers now that it's ready
+        inheritanceProvider.setClient(client);
+        variablesProvider.setClient(client);
+        methodsProvider.setClient(client);
+        streamsProvider.setClient(client);
+
+        // Initial refresh if there's an active SDSL editor
+        if (vscode.window.activeTextEditor?.document.languageId === 'sdsl') {
+            inheritanceProvider.refresh();
+            variablesProvider.refresh();
+            methodsProvider.refresh();
+            streamsProvider.refresh();
+        }
     } catch (error) {
         console.error('Failed to start language server:', error);
         vscode.window.showWarningMessage(

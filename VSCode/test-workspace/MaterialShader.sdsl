@@ -1,5 +1,5 @@
 // Material shader example
-shader MaterialShader : MaterialSurfacePixelStageCompositor
+shader MaterialShader : MaterialSurfacePixelStageCompositor, ITestAbstract
 {
     // PBR parameters
     stage float Metalness = 0.0f;

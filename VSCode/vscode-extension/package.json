@@ -1,7 +1,7 @@
 {
   "name": "stride-shader-tools",
   "displayName": "Stride Shader Tools",
-  "description": "IntelliSense, debugging, and AI assistance for Stride SDSL shaders",
+  "description": "IntelliSense, debugging, and assistance for Stride SDSL shaders",
   "icon": "icons/icon.png",
   "version": "0.1.0",
   "publisher": "tebjan",
@@ -29,6 +29,39 @@
   },
   "main": "./dist/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "strideShaderExplorer",
+          "title": "Stride Shaders",
+          "icon": "icons/sdsl-dark.svg"
+        }
+      ]
+    },
+    "views": {
+      "strideShaderExplorer": [
+        {
+          "id": "strideInheritance",
+          "name": "Inheritance",
+          "when": "resourceLangId == sdsl"
+        },
+        {
+          "id": "strideStreams",
+          "name": "Streams",
+          "when": "resourceLangId == sdsl"
+        },
+        {
+          "id": "strideVariables",
+          "name": "Variables",
+          "when": "resourceLangId == sdsl"
+        },
+        {
+          "id": "strideMethods",
+          "name": "Methods",
+          "when": "resourceLangId == sdsl"
+        }
+      ]
+    },
     "languages": [
       {
         "id": "sdsl",
@@ -97,6 +130,15 @@
       {
         "command": "strideShaderTools.removeBaseShader",
         "title": "Stride Shaders: Remove Base Shader"
+      },
+      {
+        "command": "strideShaderTools.openShader",
+        "title": "Stride Shaders: Open Shader File"
+      },
+      {
+        "command": "strideShaderTools.refreshPanels",
+        "title": "Stride Shaders: Refresh Panels",
+        "icon": "$(refresh)"
       }
     ]
   },

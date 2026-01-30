@@ -12,7 +12,7 @@
             "outFiles": [
                 "${workspaceFolder}/VSCode/vscode-extension/dist/**/*.js"
             ],
-            "preLaunchTask": "watch-extension",
+            "preLaunchTask": "build-server-then-watch",
             "sourceMaps": true
         },
         {

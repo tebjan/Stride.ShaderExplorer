@@ -3,7 +3,7 @@ name: Release Extension
 on:
   push:
     tags:
-      - "v*"
+      - "vscode-v*"
   workflow_dispatch:
     inputs:
       version:
@@ -35,7 +35,7 @@ jobs:
             echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
             echo "PRE_RELEASE=${{ github.event.inputs.pre-release }}" >> $GITHUB_OUTPUT
           else
-            VERSION="${GITHUB_REF#refs/tags/v}"
+            VERSION="${GITHUB_REF#refs/tags/vscode-v}"
             echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
             if [[ "$VERSION" == *"-"* ]]; then
               echo "PRE_RELEASE=true" >> $GITHUB_OUTPUT

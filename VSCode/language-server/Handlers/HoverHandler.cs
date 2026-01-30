@@ -80,6 +80,12 @@ public class HoverHandler : HoverHandlerBase
             var parsed = _workspace.GetParsedShader(word);
             var markdown = BuildShaderHoverContent(word, parsed, shaderInfo.DisplayPath);
 
+            // Check if this is a redundant base shader (add remove action only, diagnostic shows the warning)
+            if (currentParsed != null && IsRedundantBaseShader(currentParsed, word, out var inheritedVia))
+            {
+                markdown += $"\n\nRemove: {word}";
+            }
+
             return Task.FromResult<Hover?>(new Hover
             {
                 Contents = new MarkedStringsOrMarkupContent(new MarkupContent
@@ -134,6 +140,23 @@ public class HoverHandler : HoverHandlerBase
             if (allMethods.Count > 0)
             {
                 var markdown = BuildMethodsHoverContent(allMethods, currentShaderName);
+
+                // Check if this is an orphaned override (local override with no base method)
+                var localMethod = currentParsed.Methods.FirstOrDefault(m =>
+                    string.Equals(m.Name, word, StringComparison.OrdinalIgnoreCase));
+                if (localMethod?.IsOverride == true && allMethods.Count == 1)
+                {
+                    // Only the local override exists - suggest base shaders that define this method with same signature
+                    var methodSuggestions = _inheritanceResolver.FindShadersDefiningMethodWithSignature(localMethod);
+                    if (methodSuggestions.Count > 0)
+                    {
+                        markdown += $"\n\n---\n\n⚠️ *No base method found*\n\n*Click to add as base:* " +
+                            string.Join(", ", methodSuggestions.Take(10).Select(s => $"Add: {s}"));
+                        if (methodSuggestions.Count > 10)
+                            markdown += $" *(+{methodSuggestions.Count - 10} more)*";
+                    }
+                }
+
                 return Task.FromResult<Hover?>(new Hover
                 {
                     Contents = new MarkedStringsOrMarkupContent(new MarkupContent
@@ -174,15 +197,94 @@ public class HoverHandler : HoverHandlerBase
             });
         }
 
-        // Always show a tooltip - helps user know hover is working
-        return Task.FromResult<Hover?>(new Hover
+        // Check if we can suggest base shaders that define this identifier
+        var suggestions = FindShaderSuggestions(word, currentParsed);
+        if (suggestions.HasSuggestions)
         {
-            Contents = new MarkedStringsOrMarkupContent(new MarkupContent
+            var markdown = BuildSuggestionHover(word, suggestions);
+            return Task.FromResult<Hover?>(new Hover
             {
-                Kind = MarkupKind.Markdown,
-                Value = $"*No info available for* `{word}`"
-            })
-        });
+                Contents = new MarkedStringsOrMarkupContent(new MarkupContent
+                {
+                    Kind = MarkupKind.Markdown,
+                    Value = markdown
+                })
+            });
+        }
+
+        // No hover info - return null to let diagnostics show without extra noise
+        return Task.FromResult<Hover?>(null);
+    }
+
+    /// <summary>
+    /// Find shaders that provide access to the given identifier using smart filtering.
+    /// </summary>
+    private ShaderSuggestions FindShaderSuggestions(string name, ParsedShader? currentParsed)
+    {
+        return _inheritanceResolver.FindSmartSuggestions(name, currentParsed);
+    }
+
+    /// <summary>
+    /// Build hover content with shader suggestions for undefined identifiers.
+    /// Each shader name is formatted as "Add: ShaderName" so the extension makes it clickable.
+    /// </summary>
+    private static string BuildSuggestionHover(string name, ShaderSuggestions suggestions)
+    {
+        var lines = new List<string>();
+
+        // Brief intro - click any shader to add it
+        lines.Add("*Click to add as base shader:*");
+
+        // Direct definers - where the member is actually defined
+        if (suggestions.DirectDefiners.Count > 0)
+        {
+            lines.Add("**Defined in:** " + string.Join(", ", suggestions.DirectDefiners.Select(s => $"Add: {s}")));
+        }
+
+        // Popular shaders that provide access via inheritance
+        if (suggestions.PopularInheritors.Count > 0)
+        {
+            lines.Add("**Also via:** " + string.Join(", ", suggestions.PopularInheritors.Select(s => $"Add: {s}")));
+        }
+
+        // Workspace/local shaders
+        if (suggestions.WorkspaceInheritors.Count > 0)
+        {
+            lines.Add("**Local:** " + string.Join(", ", suggestions.WorkspaceInheritors.Select(s => $"Add: {s}")));
+        }
+
+        // Use double newlines for markdown paragraph breaks
+        return string.Join("\n\n", lines);
+    }
+
+    /// <summary>
+    /// Check if a shader is a redundant base shader in the current shader's inheritance list.
+    /// Returns true if another base shader already transitively inherits from this one.
+    /// </summary>
+    private bool IsRedundantBaseShader(ParsedShader currentShader, string baseShaderName, out string? inheritedVia)
+    {
+        inheritedVia = null;
+        var baseNames = currentShader.BaseShaderNames;
+
+        // Must be in the direct base list
+        if (!baseNames.Any(b => string.Equals(b, baseShaderName, StringComparison.OrdinalIgnoreCase)))
+            return false;
+
+        // Check if any other base shader transitively inherits from this one
+        foreach (var otherBase in baseNames)
+        {
+            if (string.Equals(otherBase, baseShaderName, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var chain = _inheritanceResolver.ResolveInheritanceChain(otherBase);
+            if (chain.Any(s => string.Equals(s.Name, baseShaderName, StringComparison.OrdinalIgnoreCase)))
+            {
+                inheritedVia = otherBase;
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

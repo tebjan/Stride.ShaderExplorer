@@ -23,6 +23,8 @@ class Program
                 .WithHandler<HoverHandler>()
                 .WithHandler<SignatureHelpHandler>()
                 .WithHandler<CodeActionHandler>()
+                .WithHandler<InheritanceTreeHandler>()
+                .WithHandler<ShaderMembersHandler>()
                 .OnInitialize((server, request, token) =>
                 {
                     var workspace = server.Services.GetRequiredService<ShaderWorkspace>();

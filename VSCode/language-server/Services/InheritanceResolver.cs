@@ -10,10 +10,72 @@ public class InheritanceResolver
     private readonly ShaderWorkspace _workspace;
     private readonly ILogger<InheritanceResolver> _logger;
 
+    // Cache: shader name -> number of shaders that directly inherit from it
+    private Dictionary<string, int>? _childCountCache;
+    private readonly object _cacheLock = new();
+
     public InheritanceResolver(ShaderWorkspace workspace, ILogger<InheritanceResolver> logger)
     {
         _workspace = workspace;
         _logger = logger;
+
+        // Rebuild cache when indexing completes
+        _workspace.IndexingComplete += (_, _) => InvalidateChildCountCache();
+    }
+
+    /// <summary>
+    /// Invalidates the child count cache (call when shaders are re-indexed).
+    /// </summary>
+    public void InvalidateChildCountCache()
+    {
+        lock (_cacheLock)
+        {
+            _childCountCache = null;
+        }
+    }
+
+    /// <summary>
+    /// Gets the number of shaders that directly inherit from the given shader.
+    /// Higher count = more "popular" as a base shader.
+    /// </summary>
+    public int GetChildCount(string shaderName)
+    {
+        EnsureChildCountCache();
+        lock (_cacheLock)
+        {
+            return _childCountCache!.TryGetValue(shaderName, out var count) ? count : 0;
+        }
+    }
+
+    /// <summary>
+    /// Checks if a shader is "popular" (used as direct base by 2+ other shaders).
+    /// </summary>
+    public bool IsPopularBaseShader(string shaderName) => GetChildCount(shaderName) >= 2;
+
+    private void EnsureChildCountCache()
+    {
+        lock (_cacheLock)
+        {
+            if (_childCountCache != null) return;
+
+            _childCountCache = new Dictionary<string, int>();
+            var allShaders = _workspace.GetAllShaders();
+
+            foreach (var shader in allShaders)
+            {
+                var parsed = _workspace.GetParsedShader(shader.Name);
+                if (parsed?.BaseShaderNames == null) continue;
+
+                foreach (var baseName in parsed.BaseShaderNames)
+                {
+                    if (!_childCountCache.ContainsKey(baseName))
+                        _childCountCache[baseName] = 0;
+                    _childCountCache[baseName]++;
+                }
+            }
+
+            _logger.LogDebug("Built child count cache: {Count} base shaders tracked", _childCountCache.Count);
+        }
     }
 
     /// <summary>
@@ -153,8 +215,12 @@ public class InheritanceResolver
     public List<string> FindShadersDefiningVariable(string variableName)
     {
         var result = new List<string>();
+        var allShaders = _workspace.GetAllShaders();
 
-        foreach (var shader in _workspace.GetAllShaders())
+        _logger.LogDebug("FindShadersDefiningVariable: searching {Count} indexed shaders for '{Variable}'",
+            allShaders.Count, variableName);
+
+        foreach (var shader in allShaders)
         {
             var parsed = _workspace.GetParsedShader(shader.Name);
             if (parsed == null) continue;
@@ -165,6 +231,9 @@ public class InheritanceResolver
                 result.Add(shader.Name);
             }
         }
+
+        _logger.LogDebug("FindShadersDefiningVariable: found {Count} shaders defining '{Variable}': {Shaders}",
+            result.Count, variableName, result.Count > 0 ? string.Join(", ", result) : "NONE");
 
         return result;
     }
@@ -193,6 +262,56 @@ public class InheritanceResolver
     }
 
     /// <summary>
+    /// Search ALL indexed shaders to find which ones define a method with matching signature.
+    /// Matches by name, return type, and parameter types.
+    /// </summary>
+    public List<string> FindShadersDefiningMethodWithSignature(ShaderMethod targetMethod)
+    {
+        var result = new List<string>();
+
+        foreach (var shader in _workspace.GetAllShaders())
+        {
+            var parsed = _workspace.GetParsedShader(shader.Name);
+            if (parsed == null) continue;
+
+            // Check if this shader directly defines a method with matching signature
+            if (parsed.Methods.Any(m => MethodSignaturesMatch(m, targetMethod)))
+            {
+                result.Add(shader.Name);
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Check if two methods have matching signatures (name, return type, parameter types).
+    /// </summary>
+    private static bool MethodSignaturesMatch(ShaderMethod a, ShaderMethod b)
+    {
+        // Name must match (case-insensitive)
+        if (!string.Equals(a.Name, b.Name, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        // Return type must match (case-insensitive)
+        if (!string.Equals(a.ReturnType, b.ReturnType, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        // Parameter count must match
+        if (a.Parameters.Count != b.Parameters.Count)
+            return false;
+
+        // Each parameter type must match (case-insensitive)
+        for (int i = 0; i < a.Parameters.Count; i++)
+        {
+            if (!string.Equals(a.Parameters[i].TypeName, b.Parameters[i].TypeName, StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// Search ALL indexed shaders to find which ones define a stream variable with the given name.
     /// Streams are typically what's accessed via streams.X syntax.
     /// </summary>
@@ -214,5 +333,129 @@ public class InheritanceResolver
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Search ALL indexed shaders to find which ones define a stage variable with the given name.
+    /// Stage variables are shared across shader stages (like Eye, WorldViewProjection, etc.)
+    /// </summary>
+    public List<string> FindShadersDefiningStageVariable(string varName)
+    {
+        var result = new List<string>();
+
+        foreach (var shader in _workspace.GetAllShaders())
+        {
+            var parsed = _workspace.GetParsedShader(shader.Name);
+            if (parsed == null) continue;
+
+            // Check if this shader directly defines a stage variable
+            if (parsed.Variables.Any(v =>
+                string.Equals(v.Name, varName, StringComparison.OrdinalIgnoreCase) && v.IsStage))
+            {
+                result.Add(shader.Name);
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Find shaders that provide access to a member (variable or method) either directly or via inheritance.
+    /// Returns a smart-filtered list based on:
+    /// - Direct definers (always included)
+    /// - Workspace/local shaders that inherit the member
+    /// - Popular shaders (childCount >= 2) that inherit the member
+    /// </summary>
+    public ShaderSuggestions FindSmartSuggestions(string memberName, ParsedShader? currentShader)
+    {
+        var directDefiners = new HashSet<string>();
+        var popularInheritors = new HashSet<string>();
+        var workspaceInheritors = new HashSet<string>();
+
+        // Find direct definers (variables and methods)
+        var varShaders = FindShadersDefiningVariable(memberName);
+        var methodShaders = FindShadersDefiningMethod(memberName);
+        foreach (var s in varShaders) directDefiners.Add(s);
+        foreach (var s in methodShaders) directDefiners.Add(s);
+
+        // Build set of shaders to exclude (already inherited by current shader)
+        var alreadyInherited = new HashSet<string>();
+        if (currentShader != null)
+        {
+            alreadyInherited.Add(currentShader.Name);
+            foreach (var baseName in currentShader.BaseShaderNames)
+                alreadyInherited.Add(baseName);
+            foreach (var baseShader in ResolveInheritanceChain(currentShader.Name))
+                alreadyInherited.Add(baseShader.Name);
+        }
+
+        // Remove already inherited from direct definers
+        directDefiners.RemoveWhere(s => alreadyInherited.Contains(s));
+
+        // Now find shaders that inherit from the direct definers
+        foreach (var definer in directDefiners.ToList())
+        {
+            foreach (var shader in _workspace.GetAllShaders())
+            {
+                if (alreadyInherited.Contains(shader.Name)) continue;
+                if (directDefiners.Contains(shader.Name)) continue;
+
+                // Check if this shader inherits from the definer
+                var inheritanceChain = ResolveInheritanceChain(shader.Name);
+                if (inheritanceChain.Any(b => b.Name == definer))
+                {
+                    // This shader provides access to the member via inheritance
+                    if (shader.Source == ShaderSource.Workspace)
+                    {
+                        workspaceInheritors.Add(shader.Name);
+                    }
+                    else if (IsPopularBaseShader(shader.Name))
+                    {
+                        popularInheritors.Add(shader.Name);
+                    }
+                }
+            }
+        }
+
+        _logger.LogDebug("FindSmartSuggestions for '{Member}': direct={Direct}, popular={Popular}, workspace={Workspace}",
+            memberName,
+            string.Join(", ", directDefiners),
+            string.Join(", ", popularInheritors),
+            string.Join(", ", workspaceInheritors));
+
+        return new ShaderSuggestions
+        {
+            DirectDefiners = directDefiners.ToList(),
+            PopularInheritors = popularInheritors.ToList(),
+            WorkspaceInheritors = workspaceInheritors.ToList()
+        };
+    }
+}
+
+/// <summary>
+/// Result of smart shader suggestion search.
+/// </summary>
+public class ShaderSuggestions
+{
+    /// <summary>Shaders that directly define the member.</summary>
+    public List<string> DirectDefiners { get; set; } = new();
+
+    /// <summary>Popular shaders (used by 2+ others) that provide access via inheritance.</summary>
+    public List<string> PopularInheritors { get; set; } = new();
+
+    /// <summary>Workspace/local shaders that provide access via inheritance.</summary>
+    public List<string> WorkspaceInheritors { get; set; } = new();
+
+    /// <summary>Check if any suggestions are available.</summary>
+    public bool HasSuggestions => DirectDefiners.Count > 0 || PopularInheritors.Count > 0 || WorkspaceInheritors.Count > 0;
+
+    /// <summary>Get all suggestions as a flat list (direct first, then popular, then workspace).</summary>
+    public List<string> GetAllSuggestions(int maxCount = 5)
+    {
+        var result = new List<string>();
+        result.AddRange(DirectDefiners);
+        result.AddRange(PopularInheritors.Where(s => !result.Contains(s)));
+        result.AddRange(WorkspaceInheritors.Where(s => !result.Contains(s)));
+        return result.Take(maxCount).ToList();
     }
 }
