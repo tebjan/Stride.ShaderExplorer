@@ -8,7 +8,7 @@ export interface ShaderNode {
     source: string;
     line: number;
     isLocal: boolean;
-    children?: ShaderNode[] | null;  // Direct base shaders for hierarchical display
+    children?: ShaderNode[] | null; // Direct base shaders for hierarchical display
 }
 
 export interface MemberInfo {
@@ -192,7 +192,9 @@ export class UnifiedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 
         const item = new vscode.TreeItem(
             element.shaderName,
-            isCollapsed ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.Expanded
+            isCollapsed
+                ? vscode.TreeItemCollapsibleState.Collapsed
+                : vscode.TreeItemCollapsibleState.Expanded
         );
         item.id = nodeId;
         item.iconPath = new vscode.ThemeIcon('symbol-class');
@@ -207,14 +209,14 @@ export class UnifiedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
             compositions: 'Compositions',
             streams: 'Streams',
             variables: 'Variables',
-            methods: 'Methods'
+            methods: 'Methods',
         };
         const icons: Record<CategoryType, string> = {
             inheritance: 'type-hierarchy',
             compositions: 'extensions',
             streams: 'pulse',
             variables: 'symbol-variable',
-            methods: 'symbol-method'
+            methods: 'symbol-method',
         };
 
         const nodeId = this.getNodeId(element);
@@ -222,11 +224,14 @@ export class UnifiedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
         const countLabel = element.count > 0 ? ` (${element.count})` : '';
 
         // Check stored state, with defaults for Inheritance and Methods expanded
-        const expandedByDefault = element.category === 'inheritance' || element.category === 'methods';
+        const expandedByDefault =
+            element.category === 'inheritance' || element.category === 'methods';
         const isCollapsed = this.isNodeCollapsed(nodeId);
         const collapsibleState = isCollapsed
             ? vscode.TreeItemCollapsibleState.Collapsed
-            : (expandedByDefault ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
+            : expandedByDefault
+              ? vscode.TreeItemCollapsibleState.Expanded
+              : vscode.TreeItemCollapsibleState.Collapsed;
 
         const item = new vscode.TreeItem(label + countLabel, collapsibleState);
         item.id = nodeId;
@@ -290,7 +295,7 @@ export class UnifiedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
         item.command = {
             command: 'strideShaderTools.openShader',
             title: 'Open Shader',
-            arguments: [shader.filePath, shader.line]
+            arguments: [shader.filePath, shader.line],
         };
         item.contextValue = 'baseShader';
         return item;
@@ -313,12 +318,22 @@ export class UnifiedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 
         const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
 
-        // Description: source shader, plus stage name for entry points
-        if (member.isEntryPoint) {
-            const stageName = this.getShaderStageName(member.name);
-            item.description = `${member.sourceShader} • ${stageName}`;
+        // Description: only show source shader for inherited members (local members show nothing)
+        if (member.isLocal) {
+            // No description for local members - they're in the current shader
+            if (member.isEntryPoint) {
+                const stageName = this.getShaderStageName(member.name);
+                item.description = stageName;
+            }
+            // else: no description
         } else {
-            item.description = member.sourceShader;
+            // Inherited members show source shader
+            if (member.isEntryPoint) {
+                const stageName = this.getShaderStageName(member.name);
+                item.description = `${member.sourceShader} • ${stageName}`;
+            } else {
+                item.description = member.sourceShader;
+            }
         }
 
         // Icon based on local vs inherited, special icon for entry points
@@ -331,9 +346,12 @@ export class UnifiedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
                 variables: ['symbol-field', 'symbol-constant'],
                 methods: ['symbol-method', 'symbol-function'],
                 inheritance: ['symbol-class', 'symbol-interface'],
-                compositions: ['extensions', 'package']
+                compositions: ['extensions', 'package'],
             };
-            const [localIcon, inheritedIcon] = iconMap[element.category] || ['symbol-field', 'symbol-constant'];
+            const [localIcon, inheritedIcon] = iconMap[element.category] || [
+                'symbol-field',
+                'symbol-constant',
+            ];
             item.iconPath = new vscode.ThemeIcon(member.isLocal ? localIcon : inheritedIcon);
         }
 
@@ -341,13 +359,19 @@ export class UnifiedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
         item.tooltip = new vscode.MarkdownString();
         const qualifiers = member.isStage ? 'stage ' : '';
         if (element.category === 'methods') {
-            item.tooltip.appendCodeblock(`${qualifiers}${member.type} ${member.name}${member.signature}`, 'sdsl');
+            item.tooltip.appendCodeblock(
+                `${qualifiers}${member.type} ${member.name}${member.signature}`,
+                'sdsl'
+            );
             if (member.isEntryPoint) {
                 const stageName = this.getShaderStageName(member.name);
                 item.tooltip.appendMarkdown(`\n\n**Shader Stage Entry Point** (${stageName})`);
             }
         } else if (element.category === 'streams') {
-            item.tooltip.appendCodeblock(`stream ${qualifiers}${member.type} ${member.name}`, 'sdsl');
+            item.tooltip.appendCodeblock(
+                `stream ${qualifiers}${member.type} ${member.name}`,
+                'sdsl'
+            );
         } else {
             item.tooltip.appendCodeblock(`${qualifiers}${member.type} ${member.name}`, 'sdsl');
         }
@@ -356,14 +380,16 @@ export class UnifiedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
             item.tooltip.appendMarkdown(`\n\n${member.comment}`);
         }
 
-        item.contextValue = member.isLocal ? `local${element.category}` : `inherited${element.category}`;
+        item.contextValue = member.isLocal
+            ? `local${element.category}`
+            : `inherited${element.category}`;
 
         // Command to navigate to definition
         if (member.filePath && member.line > 0) {
             item.command = {
                 command: 'strideShaderTools.openShader',
                 title: 'Go to Definition',
-                arguments: [member.filePath, member.line]
+                arguments: [member.filePath, member.line],
             };
         }
 
@@ -375,7 +401,8 @@ export class UnifiedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
         const label = `${comp.type} ${comp.name}`;
 
         const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
-        item.description = comp.sourceShader;
+        // Only show source shader for inherited compositions (local ones show nothing)
+        item.description = comp.isLocal ? undefined : comp.sourceShader;
         item.iconPath = new vscode.ThemeIcon(comp.isLocal ? 'extensions' : 'package');
 
         item.tooltip = new vscode.MarkdownString();
@@ -389,7 +416,7 @@ export class UnifiedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
             item.command = {
                 command: 'strideShaderTools.openShader',
                 title: 'Go to Definition',
-                arguments: [comp.filePath, comp.line]
+                arguments: [comp.filePath, comp.line],
             };
         }
 
@@ -401,15 +428,15 @@ export class UnifiedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
      */
     private getShaderStageName(methodName: string): string {
         const stages: Record<string, string> = {
-            'VSMain': 'Vertex',
-            'HSMain': 'Hull',
-            'HSConstantMain': 'Hull Constant',
-            'DSMain': 'Domain',
-            'GSMain': 'Geometry',
-            'PSMain': 'Pixel',
-            'CSMain': 'Compute',
-            'ShadeVertex': 'Vertex',
-            'ShadePixel': 'Pixel',
+            VSMain: 'Vertex',
+            HSMain: 'Hull',
+            HSConstantMain: 'Hull Constant',
+            DSMain: 'Domain',
+            GSMain: 'Geometry',
+            PSMain: 'Pixel',
+            CSMain: 'Compute',
+            ShadeVertex: 'Vertex',
+            ShadePixel: 'Pixel',
         };
         return stages[methodName] || 'Unknown';
     }
@@ -435,11 +462,13 @@ export class UnifiedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
                 return [];
             }
 
-            return [{
-                type: 'root',
-                shaderName: currentShader.name,
-                filePath: currentShader.filePath
-            }];
+            return [
+                {
+                    type: 'root',
+                    shaderName: currentShader.name,
+                    filePath: currentShader.filePath,
+                },
+            ];
         }
 
         // Root node: show categories
@@ -458,7 +487,11 @@ export class UnifiedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 
             // Only show compositions category if there are any
             if (compositionsCount > 0) {
-                categories.push({ type: 'category', category: 'compositions', count: compositionsCount });
+                categories.push({
+                    type: 'category',
+                    category: 'compositions',
+                    count: compositionsCount,
+                });
             }
 
             categories.push(
@@ -480,9 +513,9 @@ export class UnifiedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
         if (element.type === 'shader') {
             const shader = element.shader;
             if (shader.children && shader.children.length > 0) {
-                return shader.children.map(child => ({
+                return shader.children.map((child) => ({
                     type: 'shader' as const,
-                    shader: child
+                    shader: child,
                 }));
             }
         }
@@ -500,12 +533,14 @@ export class UnifiedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
         try {
             // Load both in parallel
             const [inheritanceRaw, membersRaw] = await Promise.all([
-                this.client!.sendRequest<InheritanceTreeResponse>('stride/getInheritanceTree', { uri }),
-                this.client!.sendRequest<ShaderMembersResponse>('stride/getShaderMembers', { uri })
+                this.client?.sendRequest<InheritanceTreeResponse>('stride/getInheritanceTree', {
+                    uri,
+                }),
+                this.client?.sendRequest<ShaderMembersResponse>('stride/getShaderMembers', { uri }),
             ]);
 
-            this.cachedInheritance = inheritanceRaw;
-            this.cachedMembers = membersRaw;
+            this.cachedInheritance = inheritanceRaw ?? null;
+            this.cachedMembers = membersRaw ?? null;
         } catch (error) {
             console.error('[UnifiedTree] Failed to load data:', error);
             this.cachedInheritance = null;
@@ -515,13 +550,14 @@ export class UnifiedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 
     private getCategoryChildren(category: CategoryType): TreeNode[] {
         switch (category) {
-            case 'inheritance':
+            case 'inheritance': {
                 // Use hierarchical children from currentShader for proper tree structure
                 const directBases = this.cachedInheritance?.currentShader?.children ?? [];
-                return directBases.map(shader => ({
+                return directBases.map((shader) => ({
                     type: 'shader' as const,
-                    shader
+                    shader,
                 }));
+            }
 
             case 'compositions':
                 return this.getSortedCompositions(this.cachedMembers?.compositions ?? []);
@@ -546,9 +582,9 @@ export class UnifiedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
             return a.name.localeCompare(b.name);
         });
 
-        return sorted.map(composition => ({
+        return sorted.map((composition) => ({
             type: 'composition' as const,
-            composition
+            composition,
         }));
     }
 
@@ -561,10 +597,10 @@ export class UnifiedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
             return a.name.localeCompare(b.name);
         });
 
-        return sorted.map(member => ({
+        return sorted.map((member) => ({
             type: 'member' as const,
             member,
-            category
+            category,
         }));
     }
 

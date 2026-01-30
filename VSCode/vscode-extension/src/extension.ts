@@ -7,12 +7,12 @@ import {
     type ServerOptions,
     TransportKind,
 } from 'vscode-languageclient/node';
-import { UnifiedTreeProvider } from './panels';
 import {
-    ExternalShaderProvider,
     EXTERNAL_SHADER_SCHEME,
+    ExternalShaderProvider,
     createExternalShaderUri,
 } from './ExternalShaderProvider';
+import { UnifiedTreeProvider } from './panels';
 
 const EXTENSION_ID = 'tebjan.stride-shader-tools';
 
@@ -20,6 +20,9 @@ let client: LanguageClient | undefined;
 
 // Unified TreeView provider (initialized after language server starts)
 let unifiedTreeProvider: UnifiedTreeProvider;
+
+// Debounce timeout for panel refresh (typed properly to avoid 'any' on globalThis)
+let refreshTimeout: ReturnType<typeof setTimeout> | undefined;
 
 // Regex to detect each "Add: ShaderName" pattern in hover content (global)
 const ADD_SHADER_REGEX = /Add:\s+(\w+)/g;
@@ -47,10 +50,14 @@ export async function activate(context: vscode.ExtensionContext) {
     // Register file system provider for external (read-only) shaders
     const externalShaderProvider = new ExternalShaderProvider();
     context.subscriptions.push(
-        vscode.workspace.registerFileSystemProvider(EXTERNAL_SHADER_SCHEME, externalShaderProvider, {
-            isReadonly: true,
-            isCaseSensitive: true,
-        })
+        vscode.workspace.registerFileSystemProvider(
+            EXTERNAL_SHADER_SCHEME,
+            externalShaderProvider,
+            {
+                isReadonly: true,
+                isCaseSensitive: true,
+            }
+        )
     );
 
     // Register commands
@@ -67,27 +74,34 @@ export async function activate(context: vscode.ExtensionContext) {
     // Command to open a shader file (used by TreeView items and go-to-definition)
     // Non-workspace files (Stride/vvvv shaders) open as read-only
     context.subscriptions.push(
-        vscode.commands.registerCommand('strideShaderTools.openShader', async (filePath: string, line?: number) => {
-            if (typeof filePath !== 'string') {
-                return;
+        vscode.commands.registerCommand(
+            'strideShaderTools.openShader',
+            async (filePath: string, line?: number) => {
+                if (typeof filePath !== 'string') {
+                    return;
+                }
+                await openShaderFile(filePath, line);
             }
-            await openShaderFile(filePath, line);
-        })
+        )
     );
 
     // Command for document link clicks (direct click on shader names in code)
     // Receives encoded args: "filePath|isWorkspaceShader"
     context.subscriptions.push(
-        vscode.commands.registerCommand('strideShaderTools.openShaderLink', async (encodedArgs: string) => {
-            try {
-                const args = decodeURIComponent(encodedArgs);
-                const [filePath, isWorkspaceStr] = args.split('|');
-                const isWorkspaceShader = isWorkspaceStr === 'true' || isWorkspaceStr === 'True';
-                await openShaderFile(filePath, undefined, isWorkspaceShader);
-            } catch (error) {
-                console.error('Failed to open shader link:', error);
+        vscode.commands.registerCommand(
+            'strideShaderTools.openShaderLink',
+            async (encodedArgs: string) => {
+                try {
+                    const args = decodeURIComponent(encodedArgs);
+                    const [filePath, isWorkspaceStr] = args.split('|');
+                    const isWorkspaceShader =
+                        isWorkspaceStr === 'true' || isWorkspaceStr === 'True';
+                    await openShaderFile(filePath, undefined, isWorkspaceShader);
+                } catch (error) {
+                    console.error('Failed to open shader link:', error);
+                }
             }
-        })
+        )
     );
 
     // Command to refresh all panels
@@ -116,14 +130,14 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // Track expansion state changes
     context.subscriptions.push(
-        treeView.onDidExpandElement(e => {
-            const nodeId = (e.element as any).id ?? getNodeIdFromElement(e.element);
+        treeView.onDidExpandElement((e) => {
+            const nodeId = getNodeIdFromElement(e.element);
             if (nodeId) {
                 unifiedTreeProvider.onNodeExpansionChanged(nodeId, false);
             }
         }),
-        treeView.onDidCollapseElement(e => {
-            const nodeId = (e.element as any).id ?? getNodeIdFromElement(e.element);
+        treeView.onDidCollapseElement((e) => {
+            const nodeId = getNodeIdFromElement(e.element);
             if (nodeId) {
                 unifiedTreeProvider.onNodeExpansionChanged(nodeId, true);
             }
@@ -132,7 +146,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // Refresh panel when active editor changes to an SDSL file
     context.subscriptions.push(
-        vscode.window.onDidChangeActiveTextEditor(editor => {
+        vscode.window.onDidChangeActiveTextEditor((editor) => {
             if (editor?.document.languageId === 'sdsl') {
                 unifiedTreeProvider.refresh();
             }
@@ -141,12 +155,14 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // Soft refresh panel when document content changes (preserves tree expansion)
     context.subscriptions.push(
-        vscode.workspace.onDidChangeTextDocument(event => {
-            if (event.document.languageId === 'sdsl' &&
-                event.document === vscode.window.activeTextEditor?.document) {
+        vscode.workspace.onDidChangeTextDocument((event) => {
+            if (
+                event.document.languageId === 'sdsl' &&
+                event.document === vscode.window.activeTextEditor?.document
+            ) {
                 // Debounce: only refresh after user stops typing
-                clearTimeout((globalThis as any).__sdslRefreshTimeout);
-                (globalThis as any).__sdslRefreshTimeout = setTimeout(() => {
+                clearTimeout(refreshTimeout);
+                refreshTimeout = setTimeout(() => {
                     // Use soft refresh to preserve tree expansion state
                     unifiedTreeProvider.softRefresh();
                 }, 500); // 500ms debounce
@@ -156,155 +172,178 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // Command to add a base shader to the current file's shader declaration
     context.subscriptions.push(
-        vscode.commands.registerCommand('strideShaderTools.addBaseShader', async (shaderName: string) => {
-            const editor = vscode.window.activeTextEditor;
-            if (!editor || editor.document.languageId !== 'sdsl') {
-                return;
+        vscode.commands.registerCommand(
+            'strideShaderTools.addBaseShader',
+            async (shaderName: string) => {
+                const editor = vscode.window.activeTextEditor;
+                if (!editor || editor.document.languageId !== 'sdsl') {
+                    return;
+                }
+
+                const document = editor.document;
+                const text = document.getText();
+
+                // Find the shader declaration line: "shader Name<...> : Base1, Base2 {" or "shader Name {"
+                // Capture groups: 1=shader+name+optional template params, 2=colon if present, 3=base shaders, 4=whitespace before brace, 5=brace
+                const shaderDeclRegex =
+                    /^(\s*shader\s+\w+(?:<[^>]+>)?)(\s*:\s*)?([\w\s,<>]*?)(\s*)(\{)/m;
+                const match = shaderDeclRegex.exec(text);
+
+                if (!match) {
+                    vscode.window.showWarningMessage(
+                        'Could not find shader declaration in this file.'
+                    );
+                    return;
+                }
+
+                const shaderPart = match[1]; // "shader MyShader"
+                const basesPart = match[3].trim(); // "Base1, Base2" or ""
+                const whitespace = match[4]; // whitespace before { (may include newline)
+                const brace = match[5]; // "{"
+
+                let newDeclaration: string;
+                if (!basesPart) {
+                    // No existing bases - add ": NewBase" on same line as shader name
+                    newDeclaration = `${shaderPart} : ${shaderName}${whitespace}${brace}`;
+                } else {
+                    // Has existing bases - append ", NewBase"
+                    newDeclaration = `${shaderPart} : ${basesPart}, ${shaderName}${whitespace}${brace}`;
+                }
+
+                // Calculate the range to replace
+                const startOffset = match.index;
+                const endOffset = startOffset + match[0].length;
+                const startPos = document.positionAt(startOffset);
+                const endPos = document.positionAt(endOffset);
+                const range = new vscode.Range(startPos, endPos);
+
+                // Apply the edit
+                await editor.edit((editBuilder) => {
+                    editBuilder.replace(range, newDeclaration);
+                });
+
+                vscode.window.showInformationMessage(`Added base shader: ${shaderName}`);
             }
-
-            const document = editor.document;
-            const text = document.getText();
-
-            // Find the shader declaration line: "shader Name<...> : Base1, Base2 {" or "shader Name {"
-            // Capture groups: 1=shader+name+optional template params, 2=colon if present, 3=base shaders, 4=whitespace before brace, 5=brace
-            const shaderDeclRegex = /^(\s*shader\s+\w+(?:<[^>]+>)?)(\s*:\s*)?([\w\s,<>]*?)(\s*)(\{)/m;
-            const match = shaderDeclRegex.exec(text);
-
-            if (!match) {
-                vscode.window.showWarningMessage('Could not find shader declaration in this file.');
-                return;
-            }
-
-            const shaderPart = match[1];           // "shader MyShader"
-            const basesPart = match[3].trim();     // "Base1, Base2" or ""
-            const whitespace = match[4];           // whitespace before { (may include newline)
-            const brace = match[5];                // "{"
-
-            let newDeclaration: string;
-            if (!basesPart) {
-                // No existing bases - add ": NewBase" on same line as shader name
-                newDeclaration = `${shaderPart} : ${shaderName}${whitespace}${brace}`;
-            } else {
-                // Has existing bases - append ", NewBase"
-                newDeclaration = `${shaderPart} : ${basesPart}, ${shaderName}${whitespace}${brace}`;
-            }
-
-            // Calculate the range to replace
-            const startOffset = match.index;
-            const endOffset = startOffset + match[0].length;
-            const startPos = document.positionAt(startOffset);
-            const endPos = document.positionAt(endOffset);
-            const range = new vscode.Range(startPos, endPos);
-
-            // Apply the edit
-            await editor.edit(editBuilder => {
-                editBuilder.replace(range, newDeclaration);
-            });
-
-            vscode.window.showInformationMessage(`Added base shader: ${shaderName}`);
-        })
+        )
     );
 
     // Command to remove a base shader from the current file's shader declaration
     context.subscriptions.push(
-        vscode.commands.registerCommand('strideShaderTools.removeBaseShader', async (shaderName: string) => {
-            const editor = vscode.window.activeTextEditor;
-            if (!editor || editor.document.languageId !== 'sdsl') {
-                return;
+        vscode.commands.registerCommand(
+            'strideShaderTools.removeBaseShader',
+            async (shaderName: string) => {
+                const editor = vscode.window.activeTextEditor;
+                if (!editor || editor.document.languageId !== 'sdsl') {
+                    return;
+                }
+
+                const document = editor.document;
+                const text = document.getText();
+
+                // Find the shader declaration line: "shader Name<...> : Base1, Base2 {"
+                // Capture groups: 1=shader+name+optional template params, 2=colon+space, 3=base shaders, 4=whitespace before brace, 5=brace
+                const shaderDeclRegex =
+                    /^(\s*shader\s+\w+(?:<[^>]+>)?)(\s*:\s*)([\w\s,<>]+?)(\s*)(\{)/m;
+                const match = shaderDeclRegex.exec(text);
+
+                if (!match) {
+                    vscode.window.showWarningMessage(
+                        'Could not find shader declaration with base shaders.'
+                    );
+                    return;
+                }
+
+                const shaderPart = match[1]; // "shader MyShader"
+                const basesPart = match[3].trim(); // "Base1, Base2"
+                const whitespace = match[4]; // whitespace before {
+                const brace = match[5]; // "{"
+
+                // Parse base shaders
+                const bases = basesPart
+                    .split(',')
+                    .map((s) => s.trim())
+                    .filter((s) => s);
+
+                // Remove the target shader (case-insensitive match)
+                const newBases = bases.filter((b) => b.toLowerCase() !== shaderName.toLowerCase());
+
+                if (newBases.length === bases.length) {
+                    vscode.window.showWarningMessage(
+                        `Base shader '${shaderName}' not found in declaration.`
+                    );
+                    return;
+                }
+
+                let newDeclaration: string;
+                if (newBases.length === 0) {
+                    // No bases left - remove the colon entirely
+                    newDeclaration = `${shaderPart}${whitespace}${brace}`;
+                } else {
+                    // Still has bases - rebuild the list
+                    newDeclaration = `${shaderPart} : ${newBases.join(', ')}${whitespace}${brace}`;
+                }
+
+                // Calculate the range to replace
+                const startOffset = match.index;
+                const endOffset = startOffset + match[0].length;
+                const startPos = document.positionAt(startOffset);
+                const endPos = document.positionAt(endOffset);
+                const range = new vscode.Range(startPos, endPos);
+
+                // Apply the edit
+                await editor.edit((editBuilder) => {
+                    editBuilder.replace(range, newDeclaration);
+                });
+
+                vscode.window.showInformationMessage(`Removed base shader: ${shaderName}`);
             }
-
-            const document = editor.document;
-            const text = document.getText();
-
-            // Find the shader declaration line: "shader Name<...> : Base1, Base2 {"
-            // Capture groups: 1=shader+name+optional template params, 2=colon+space, 3=base shaders, 4=whitespace before brace, 5=brace
-            const shaderDeclRegex = /^(\s*shader\s+\w+(?:<[^>]+>)?)(\s*:\s*)([\w\s,<>]+?)(\s*)(\{)/m;
-            const match = shaderDeclRegex.exec(text);
-
-            if (!match) {
-                vscode.window.showWarningMessage('Could not find shader declaration with base shaders.');
-                return;
-            }
-
-            const shaderPart = match[1];           // "shader MyShader"
-            const basesPart = match[3].trim();     // "Base1, Base2"
-            const whitespace = match[4];           // whitespace before {
-            const brace = match[5];                // "{"
-
-            // Parse base shaders
-            const bases = basesPart.split(',').map(s => s.trim()).filter(s => s);
-
-            // Remove the target shader (case-insensitive match)
-            const newBases = bases.filter(b => b.toLowerCase() !== shaderName.toLowerCase());
-
-            if (newBases.length === bases.length) {
-                vscode.window.showWarningMessage(`Base shader '${shaderName}' not found in declaration.`);
-                return;
-            }
-
-            let newDeclaration: string;
-            if (newBases.length === 0) {
-                // No bases left - remove the colon entirely
-                newDeclaration = `${shaderPart}${whitespace}${brace}`;
-            } else {
-                // Still has bases - rebuild the list
-                newDeclaration = `${shaderPart} : ${newBases.join(', ')}${whitespace}${brace}`;
-            }
-
-            // Calculate the range to replace
-            const startOffset = match.index;
-            const endOffset = startOffset + match[0].length;
-            const startPos = document.positionAt(startOffset);
-            const endPos = document.positionAt(endOffset);
-            const range = new vscode.Range(startPos, endPos);
-
-            // Apply the edit
-            await editor.edit(editBuilder => {
-                editBuilder.replace(range, newDeclaration);
-            });
-
-            vscode.window.showInformationMessage(`Removed base shader: ${shaderName}`);
-        })
+        )
     );
 
     // Command to rename a shader file (used by quick fix for filename mismatch)
     context.subscriptions.push(
-        vscode.commands.registerCommand('strideShaderTools.renameFile', async (oldPath: string, newPath: string) => {
-            const oldUri = vscode.Uri.file(oldPath);
-            const newUri = vscode.Uri.file(newPath);
-            const edit = new vscode.WorkspaceEdit();
-            edit.renameFile(oldUri, newUri);
-            await vscode.workspace.applyEdit(edit);
-        })
+        vscode.commands.registerCommand(
+            'strideShaderTools.renameFile',
+            async (oldPath: string, newPath: string) => {
+                const oldUri = vscode.Uri.file(oldPath);
+                const newUri = vscode.Uri.file(newPath);
+                const edit = new vscode.WorkspaceEdit();
+                edit.renameFile(oldUri, newUri);
+                await vscode.workspace.applyEdit(edit);
+            }
+        )
     );
 
     // Command to rename the shader declaration in the current file
     context.subscriptions.push(
-        vscode.commands.registerCommand('strideShaderTools.renameShaderInFile', async (newName: string) => {
-            const editor = vscode.window.activeTextEditor;
-            if (!editor || editor.document.languageId !== 'sdsl') {
-                return;
+        vscode.commands.registerCommand(
+            'strideShaderTools.renameShaderInFile',
+            async (newName: string) => {
+                const editor = vscode.window.activeTextEditor;
+                if (!editor || editor.document.languageId !== 'sdsl') {
+                    return;
+                }
+
+                const text = editor.document.getText();
+                // Find "shader OldName" and replace with "shader NewName"
+                const shaderDeclRegex = /(\bshader\s+)(\w+)(\s*[:<{])/;
+                const match = shaderDeclRegex.exec(text);
+
+                if (!match) {
+                    vscode.window.showWarningMessage('Could not find shader declaration.');
+                    return;
+                }
+
+                const startOffset = match.index + match[1].length;
+                const endOffset = startOffset + match[2].length;
+                const startPos = editor.document.positionAt(startOffset);
+                const endPos = editor.document.positionAt(endOffset);
+
+                await editor.edit((editBuilder) => {
+                    editBuilder.replace(new vscode.Range(startPos, endPos), newName);
+                });
             }
-
-            const text = editor.document.getText();
-            // Find "shader OldName" and replace with "shader NewName"
-            const shaderDeclRegex = /(\bshader\s+)(\w+)(\s*[:<{])/;
-            const match = shaderDeclRegex.exec(text);
-
-            if (!match) {
-                vscode.window.showWarningMessage('Could not find shader declaration.');
-                return;
-            }
-
-            const startOffset = match.index + match[1].length;
-            const endOffset = startOffset + match[2].length;
-            const startPos = editor.document.positionAt(startOffset);
-            const endPos = editor.document.positionAt(endOffset);
-
-            await editor.edit(editBuilder => {
-                editBuilder.replace(new vscode.Range(startPos, endPos), newName);
-            });
-        })
+        )
     );
 
     // Register a supplementary hover provider for diagnostics with clickable fix links
@@ -408,7 +447,7 @@ async function startLanguageServer(context: vscode.ExtensionContext): Promise<vo
         if (!dotnetPath) {
             vscode.window.showErrorMessage(
                 'Failed to acquire .NET 8 Runtime. Language server cannot start. ' +
-                'Please install .NET 8 Runtime manually from https://dotnet.microsoft.com/download/dotnet/8.0'
+                    'Please install .NET 8 Runtime manually from https://dotnet.microsoft.com/download/dotnet/8.0'
             );
             return;
         }
@@ -501,7 +540,9 @@ class DiagnosticHoverProvider implements vscode.HoverProvider {
  * This allows users to click directly in the tooltip to add a base shader.
  */
 function transformHoverWithClickableLinks(hover: vscode.Hover): vscode.Hover {
-    const transformContent = (content: vscode.MarkdownString | string | { language: string; value: string }): vscode.MarkdownString => {
+    const transformContent = (
+        content: vscode.MarkdownString | string | { language: string; value: string }
+    ): vscode.MarkdownString => {
         let text: string;
 
         if (typeof content === 'string') {
@@ -529,11 +570,14 @@ function transformHoverWithClickableLinks(hover: vscode.Hover): vscode.Hover {
         });
 
         // Replace "RenameFile: newName.sdsl|oldPath|newPath" with clickable link
-        newText = newText.replace(RENAME_FILE_REGEX, (_match, newName: string, oldPath: string, newPath: string) => {
-            const args = encodeURIComponent(JSON.stringify([oldPath.trim(), newPath.trim()]));
-            const commandUri = `command:strideShaderTools.renameFile?${args}`;
-            return `[Rename file to ${newName.trim()}](${commandUri})`;
-        });
+        newText = newText.replace(
+            RENAME_FILE_REGEX,
+            (_match, newName: string, oldPath: string, newPath: string) => {
+                const args = encodeURIComponent(JSON.stringify([oldPath.trim(), newPath.trim()]));
+                const commandUri = `command:strideShaderTools.renameFile?${args}`;
+                return `[Rename file to ${newName.trim()}](${commandUri})`;
+            }
+        );
 
         // Replace "RenameShader: newName" with clickable link
         newText = newText.replace(RENAME_SHADER_REGEX, (_match, newName: string) => {
@@ -543,11 +587,16 @@ function transformHoverWithClickableLinks(hover: vscode.Hover): vscode.Hover {
         });
 
         // Replace "OpenFile: displayPath|fullPath|line" with clickable link
-        newText = newText.replace(OPEN_FILE_REGEX, (_match, displayPath: string, fullPath: string, line: string) => {
-            const args = encodeURIComponent(JSON.stringify([fullPath.trim(), parseInt(line, 10)]));
-            const commandUri = `command:strideShaderTools.openShader?${args}`;
-            return `[${displayPath.trim()}](${commandUri})`;
-        });
+        newText = newText.replace(
+            OPEN_FILE_REGEX,
+            (_match, displayPath: string, fullPath: string, line: string) => {
+                const args = encodeURIComponent(
+                    JSON.stringify([fullPath.trim(), Number.parseInt(line, 10)])
+                );
+                const commandUri = `command:strideShaderTools.openShader?${args}`;
+                return `[${displayPath.trim()}](${commandUri})`;
+            }
+        );
 
         const md = new vscode.MarkdownString(newText);
         md.isTrusted = true; // Required for command URIs to work
@@ -569,7 +618,11 @@ function transformHoverWithClickableLinks(hover: vscode.Hover): vscode.Hover {
  * @param line - Optional line number to navigate to (1-based)
  * @param isWorkspaceShader - If provided, determines read-only mode. If undefined, infers from workspace folders.
  */
-async function openShaderFile(filePath: string, line?: number, isWorkspaceShader?: boolean): Promise<void> {
+async function openShaderFile(
+    filePath: string,
+    line?: number,
+    isWorkspaceShader?: boolean
+): Promise<void> {
     try {
         // Determine if this is a workspace shader
         let isEditable = isWorkspaceShader;
@@ -577,7 +630,7 @@ async function openShaderFile(filePath: string, line?: number, isWorkspaceShader
             // Infer from workspace folders
             const workspaceFolders = vscode.workspace.workspaceFolders;
             if (workspaceFolders) {
-                isEditable = workspaceFolders.some(folder =>
+                isEditable = workspaceFolders.some((folder) =>
                     filePath.toLowerCase().startsWith(folder.uri.fsPath.toLowerCase())
                 );
             } else {
@@ -615,7 +668,10 @@ async function openShaderFile(filePath: string, line?: number, isWorkspaceShader
         // Show status message for external (read-only) shaders
         if (!isEditable) {
             const shaderName = path.basename(filePath, '.sdsl');
-            vscode.window.setStatusBarMessage(`📖 ${shaderName} (External shader - read-only)`, 5000);
+            vscode.window.setStatusBarMessage(
+                `📖 ${shaderName} (External shader - read-only)`,
+                5000
+            );
         }
     } catch (error) {
         console.error('Failed to open shader file:', error);
@@ -642,7 +698,12 @@ function getNodeIdFromElement(element: unknown): string | undefined {
         const shader = el.shader as Record<string, unknown>;
         return `shader:${shader.name}`;
     }
-    if (el.type === 'member' && typeof el.member === 'object' && el.member && typeof el.category === 'string') {
+    if (
+        el.type === 'member' &&
+        typeof el.member === 'object' &&
+        el.member &&
+        typeof el.category === 'string'
+    ) {
         const member = el.member as Record<string, unknown>;
         return `member:${el.category}:${member.sourceShader}:${member.name}`;
     }
@@ -656,7 +717,7 @@ function getNodeIdFromElement(element: unknown): string | undefined {
 
 export function deactivate(): Thenable<void> | undefined {
     // Clear any pending refresh timeout
-    clearTimeout((globalThis as any).__sdslRefreshTimeout);
+    clearTimeout(refreshTimeout);
 
     if (!client) {
         return undefined;

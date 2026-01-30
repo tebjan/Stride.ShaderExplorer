@@ -18017,13 +18017,79 @@ var path = __toESM(require("node:path"));
 var vscode3 = __toESM(require("vscode"));
 var import_node = __toESM(require_node3());
 
-// src/panels/UnifiedTreeProvider.ts
+// src/ExternalShaderProvider.ts
+var fs = __toESM(require("node:fs"));
 var vscode = __toESM(require("vscode"));
+var EXTERNAL_SHADER_SCHEME = "sdsl-external";
+var ExternalShaderProvider = class {
+  _onDidChangeFile = new vscode.EventEmitter();
+  onDidChangeFile = this._onDidChangeFile.event;
+  /**
+   * Convert URI path to a real file system path.
+   * On Windows, uri.path returns "/C:/path/..." but we need "C:/path/...".
+   */
+  getRealPath(uri) {
+    return uri.fsPath;
+  }
+  watch() {
+    return new vscode.Disposable(() => {
+    });
+  }
+  stat(uri) {
+    const realPath = this.getRealPath(uri);
+    try {
+      const stats = fs.statSync(realPath);
+      return {
+        type: vscode.FileType.File,
+        ctime: stats.ctimeMs,
+        mtime: stats.mtimeMs,
+        size: stats.size
+      };
+    } catch {
+      throw vscode.FileSystemError.FileNotFound(uri);
+    }
+  }
+  readDirectory() {
+    return [];
+  }
+  createDirectory() {
+    throw vscode.FileSystemError.NoPermissions("External shaders are read-only");
+  }
+  readFile(uri) {
+    const realPath = this.getRealPath(uri);
+    try {
+      const content = fs.readFileSync(realPath);
+      return content;
+    } catch {
+      throw vscode.FileSystemError.FileNotFound(uri);
+    }
+  }
+  writeFile() {
+    throw vscode.FileSystemError.NoPermissions("External shaders are read-only");
+  }
+  delete() {
+    throw vscode.FileSystemError.NoPermissions("External shaders are read-only");
+  }
+  rename() {
+    throw vscode.FileSystemError.NoPermissions("External shaders are read-only");
+  }
+};
+function createExternalShaderUri(filePath, lineNumber) {
+  const fileUri = vscode.Uri.file(filePath);
+  let uri = fileUri.with({ scheme: EXTERNAL_SHADER_SCHEME });
+  if (lineNumber !== void 0 && lineNumber > 0) {
+    uri = uri.with({ fragment: `L${lineNumber}` });
+  }
+  return uri;
+}
+
+// src/panels/UnifiedTreeProvider.ts
+var vscode2 = __toESM(require("vscode"));
 var UnifiedTreeProvider = class {
   constructor(client2) {
     this.client = client2;
   }
-  _onDidChangeTreeData = new vscode.EventEmitter();
+  _onDidChangeTreeData = new vscode2.EventEmitter();
   onDidChangeTreeData = this._onDidChangeTreeData.event;
   cachedInheritance = null;
   cachedMembers = null;
@@ -18112,12 +18178,12 @@ var UnifiedTreeProvider = class {
   createRootItem(element) {
     const nodeId = this.getNodeId(element);
     const isCollapsed = this.isNodeCollapsed(nodeId);
-    const item = new vscode.TreeItem(
+    const item = new vscode2.TreeItem(
       element.shaderName,
-      isCollapsed ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.Expanded
+      isCollapsed ? vscode2.TreeItemCollapsibleState.Collapsed : vscode2.TreeItemCollapsibleState.Expanded
     );
     item.id = nodeId;
-    item.iconPath = new vscode.ThemeIcon("symbol-class");
+    item.iconPath = new vscode2.ThemeIcon("symbol-class");
     item.description = "current shader";
     item.contextValue = "currentShader";
     return item;
@@ -18142,10 +18208,10 @@ var UnifiedTreeProvider = class {
     const countLabel = element.count > 0 ? ` (${element.count})` : "";
     const expandedByDefault = element.category === "inheritance" || element.category === "methods";
     const isCollapsed = this.isNodeCollapsed(nodeId);
-    const collapsibleState = isCollapsed ? vscode.TreeItemCollapsibleState.Collapsed : expandedByDefault ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed;
-    const item = new vscode.TreeItem(label + countLabel, collapsibleState);
+    const collapsibleState = isCollapsed ? vscode2.TreeItemCollapsibleState.Collapsed : expandedByDefault ? vscode2.TreeItemCollapsibleState.Expanded : vscode2.TreeItemCollapsibleState.Collapsed;
+    const item = new vscode2.TreeItem(label + countLabel, collapsibleState);
     item.id = nodeId;
-    item.iconPath = new vscode.ThemeIcon(icons[element.category]);
+    item.iconPath = new vscode2.ThemeIcon(icons[element.category]);
     item.contextValue = `category-${element.category}`;
     return item;
   }
@@ -18175,16 +18241,16 @@ var UnifiedTreeProvider = class {
     const hasChildren = shader.children && shader.children.length > 0;
     let collapsibleState;
     if (!hasChildren) {
-      collapsibleState = vscode.TreeItemCollapsibleState.None;
+      collapsibleState = vscode2.TreeItemCollapsibleState.None;
     } else {
       const isCollapsed = this.isNodeCollapsed(nodeId);
-      collapsibleState = isCollapsed ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.Expanded;
+      collapsibleState = isCollapsed ? vscode2.TreeItemCollapsibleState.Collapsed : vscode2.TreeItemCollapsibleState.Expanded;
     }
-    const item = new vscode.TreeItem(shader.name, collapsibleState);
+    const item = new vscode2.TreeItem(shader.name, collapsibleState);
     item.id = nodeId;
     item.description = formattedSource;
-    item.iconPath = new vscode.ThemeIcon("symbol-interface");
-    item.tooltip = new vscode.MarkdownString();
+    item.iconPath = new vscode2.ThemeIcon("symbol-interface");
+    item.tooltip = new vscode2.MarkdownString();
     item.tooltip.appendMarkdown(`**${shader.name}**
 
 `);
@@ -18211,15 +18277,22 @@ var UnifiedTreeProvider = class {
     } else {
       label = `${stagePrefix}${member.type} ${member.name}`;
     }
-    const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
-    if (member.isEntryPoint) {
-      const stageName = this.getShaderStageName(member.name);
-      item.description = `${member.sourceShader} \u2022 ${stageName}`;
+    const item = new vscode2.TreeItem(label, vscode2.TreeItemCollapsibleState.None);
+    if (member.isLocal) {
+      if (member.isEntryPoint) {
+        const stageName = this.getShaderStageName(member.name);
+        item.description = stageName;
+      }
     } else {
-      item.description = member.sourceShader;
+      if (member.isEntryPoint) {
+        const stageName = this.getShaderStageName(member.name);
+        item.description = `${member.sourceShader} \u2022 ${stageName}`;
+      } else {
+        item.description = member.sourceShader;
+      }
     }
     if (member.isEntryPoint) {
-      item.iconPath = new vscode.ThemeIcon("play", new vscode.ThemeColor("charts.green"));
+      item.iconPath = new vscode2.ThemeIcon("play", new vscode2.ThemeColor("charts.green"));
     } else {
       const iconMap = {
         streams: ["symbol-property", "symbol-constant"],
@@ -18228,13 +18301,19 @@ var UnifiedTreeProvider = class {
         inheritance: ["symbol-class", "symbol-interface"],
         compositions: ["extensions", "package"]
       };
-      const [localIcon, inheritedIcon] = iconMap[element.category] || ["symbol-field", "symbol-constant"];
-      item.iconPath = new vscode.ThemeIcon(member.isLocal ? localIcon : inheritedIcon);
+      const [localIcon, inheritedIcon] = iconMap[element.category] || [
+        "symbol-field",
+        "symbol-constant"
+      ];
+      item.iconPath = new vscode2.ThemeIcon(member.isLocal ? localIcon : inheritedIcon);
     }
-    item.tooltip = new vscode.MarkdownString();
+    item.tooltip = new vscode2.MarkdownString();
     const qualifiers = member.isStage ? "stage " : "";
     if (element.category === "methods") {
-      item.tooltip.appendCodeblock(`${qualifiers}${member.type} ${member.name}${member.signature}`, "sdsl");
+      item.tooltip.appendCodeblock(
+        `${qualifiers}${member.type} ${member.name}${member.signature}`,
+        "sdsl"
+      );
       if (member.isEntryPoint) {
         const stageName = this.getShaderStageName(member.name);
         item.tooltip.appendMarkdown(`
@@ -18242,7 +18321,10 @@ var UnifiedTreeProvider = class {
 **Shader Stage Entry Point** (${stageName})`);
       }
     } else if (element.category === "streams") {
-      item.tooltip.appendCodeblock(`stream ${qualifiers}${member.type} ${member.name}`, "sdsl");
+      item.tooltip.appendCodeblock(
+        `stream ${qualifiers}${member.type} ${member.name}`,
+        "sdsl"
+      );
     } else {
       item.tooltip.appendCodeblock(`${qualifiers}${member.type} ${member.name}`, "sdsl");
     }
@@ -18267,10 +18349,10 @@ ${member.comment}`);
   createCompositionItem(element) {
     const comp = element.composition;
     const label = `${comp.type} ${comp.name}`;
-    const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
-    item.description = comp.sourceShader;
-    item.iconPath = new vscode.ThemeIcon(comp.isLocal ? "extensions" : "package");
-    item.tooltip = new vscode.MarkdownString();
+    const item = new vscode2.TreeItem(label, vscode2.TreeItemCollapsibleState.None);
+    item.description = comp.isLocal ? void 0 : comp.sourceShader;
+    item.iconPath = new vscode2.ThemeIcon(comp.isLocal ? "extensions" : "package");
+    item.tooltip = new vscode2.MarkdownString();
     item.tooltip.appendCodeblock(`compose ${comp.type} ${comp.name}`, "sdsl");
     item.tooltip.appendMarkdown(`
 
@@ -18290,15 +18372,15 @@ Defined in: **${comp.sourceShader}**`);
    */
   getShaderStageName(methodName) {
     const stages = {
-      "VSMain": "Vertex",
-      "HSMain": "Hull",
-      "HSConstantMain": "Hull Constant",
-      "DSMain": "Domain",
-      "GSMain": "Geometry",
-      "PSMain": "Pixel",
-      "CSMain": "Compute",
-      "ShadeVertex": "Vertex",
-      "ShadePixel": "Pixel"
+      VSMain: "Vertex",
+      HSMain: "Hull",
+      HSConstantMain: "Hull Constant",
+      DSMain: "Domain",
+      GSMain: "Geometry",
+      PSMain: "Pixel",
+      CSMain: "Compute",
+      ShadeVertex: "Vertex",
+      ShadePixel: "Pixel"
     };
     return stages[methodName] || "Unknown";
   }
@@ -18306,7 +18388,7 @@ Defined in: **${comp.sourceShader}**`);
     if (!this.client) {
       return [];
     }
-    const activeEditor = vscode.window.activeTextEditor;
+    const activeEditor = vscode2.window.activeTextEditor;
     if (!activeEditor || activeEditor.document.languageId !== "sdsl") {
       return [];
     }
@@ -18317,11 +18399,13 @@ Defined in: **${comp.sourceShader}**`);
       if (!currentShader) {
         return [];
       }
-      return [{
-        type: "root",
-        shaderName: currentShader.name,
-        filePath: currentShader.filePath
-      }];
+      return [
+        {
+          type: "root",
+          shaderName: currentShader.name,
+          filePath: currentShader.filePath
+        }
+      ];
     }
     if (element.type === "root") {
       await this.ensureDataLoaded(uri);
@@ -18334,7 +18418,11 @@ Defined in: **${comp.sourceShader}**`);
         { type: "category", category: "inheritance", count: inheritanceCount }
       ];
       if (compositionsCount > 0) {
-        categories.push({ type: "category", category: "compositions", count: compositionsCount });
+        categories.push({
+          type: "category",
+          category: "compositions",
+          count: compositionsCount
+        });
       }
       categories.push(
         { type: "category", category: "streams", count: streamsCount },
@@ -18365,11 +18453,13 @@ Defined in: **${comp.sourceShader}**`);
     this.currentUri = uri;
     try {
       const [inheritanceRaw, membersRaw] = await Promise.all([
-        this.client.sendRequest("stride/getInheritanceTree", { uri }),
-        this.client.sendRequest("stride/getShaderMembers", { uri })
+        this.client?.sendRequest("stride/getInheritanceTree", {
+          uri
+        }),
+        this.client?.sendRequest("stride/getShaderMembers", { uri })
       ]);
-      this.cachedInheritance = inheritanceRaw;
-      this.cachedMembers = membersRaw;
+      this.cachedInheritance = inheritanceRaw ?? null;
+      this.cachedMembers = membersRaw ?? null;
     } catch (error) {
       console.error("[UnifiedTree] Failed to load data:", error);
       this.cachedInheritance = null;
@@ -18378,12 +18468,13 @@ Defined in: **${comp.sourceShader}**`);
   }
   getCategoryChildren(category) {
     switch (category) {
-      case "inheritance":
+      case "inheritance": {
         const directBases = this.cachedInheritance?.currentShader?.children ?? [];
         return directBases.map((shader) => ({
           type: "shader",
           shader
         }));
+      }
       case "compositions":
         return this.getSortedCompositions(this.cachedMembers?.compositions ?? []);
       case "streams":
@@ -18434,76 +18525,11 @@ Defined in: **${comp.sourceShader}**`);
   }
 };
 
-// src/ExternalShaderProvider.ts
-var fs = __toESM(require("node:fs"));
-var vscode2 = __toESM(require("vscode"));
-var EXTERNAL_SHADER_SCHEME = "sdsl-external";
-var ExternalShaderProvider = class {
-  _onDidChangeFile = new vscode2.EventEmitter();
-  onDidChangeFile = this._onDidChangeFile.event;
-  /**
-   * Convert URI path to a real file system path.
-   * On Windows, uri.path returns "/C:/path/..." but we need "C:/path/...".
-   */
-  getRealPath(uri) {
-    return uri.fsPath;
-  }
-  watch() {
-    return new vscode2.Disposable(() => {
-    });
-  }
-  stat(uri) {
-    const realPath = this.getRealPath(uri);
-    try {
-      const stats = fs.statSync(realPath);
-      return {
-        type: vscode2.FileType.File,
-        ctime: stats.ctimeMs,
-        mtime: stats.mtimeMs,
-        size: stats.size
-      };
-    } catch {
-      throw vscode2.FileSystemError.FileNotFound(uri);
-    }
-  }
-  readDirectory() {
-    return [];
-  }
-  createDirectory() {
-    throw vscode2.FileSystemError.NoPermissions("External shaders are read-only");
-  }
-  readFile(uri) {
-    const realPath = this.getRealPath(uri);
-    try {
-      const content = fs.readFileSync(realPath);
-      return content;
-    } catch {
-      throw vscode2.FileSystemError.FileNotFound(uri);
-    }
-  }
-  writeFile() {
-    throw vscode2.FileSystemError.NoPermissions("External shaders are read-only");
-  }
-  delete() {
-    throw vscode2.FileSystemError.NoPermissions("External shaders are read-only");
-  }
-  rename() {
-    throw vscode2.FileSystemError.NoPermissions("External shaders are read-only");
-  }
-};
-function createExternalShaderUri(filePath, lineNumber) {
-  const fileUri = vscode2.Uri.file(filePath);
-  let uri = fileUri.with({ scheme: EXTERNAL_SHADER_SCHEME });
-  if (lineNumber !== void 0 && lineNumber > 0) {
-    uri = uri.with({ fragment: `L${lineNumber}` });
-  }
-  return uri;
-}
-
 // src/extension.ts
 var EXTENSION_ID = "tebjan.stride-shader-tools";
 var client;
 var unifiedTreeProvider;
+var refreshTimeout;
 var ADD_SHADER_REGEX = /Add:\s+(\w+)/g;
 var REMOVE_SHADER_REGEX = /Remove:\s+(\w+)/g;
 var RENAME_FILE_REGEX = /RenameFile:\s+([^|]+)\|([^|]+)\|(.+)/g;
@@ -18513,10 +18539,14 @@ async function activate(context) {
   console.log("Stride Shader Tools is activating...");
   const externalShaderProvider = new ExternalShaderProvider();
   context.subscriptions.push(
-    vscode3.workspace.registerFileSystemProvider(EXTERNAL_SHADER_SCHEME, externalShaderProvider, {
-      isReadonly: true,
-      isCaseSensitive: true
-    })
+    vscode3.workspace.registerFileSystemProvider(
+      EXTERNAL_SHADER_SCHEME,
+      externalShaderProvider,
+      {
+        isReadonly: true,
+        isCaseSensitive: true
+      }
+    )
   );
   context.subscriptions.push(
     vscode3.commands.registerCommand("strideShaderTools.restartServer", async () => {
@@ -18528,24 +18558,30 @@ async function activate(context) {
     })
   );
   context.subscriptions.push(
-    vscode3.commands.registerCommand("strideShaderTools.openShader", async (filePath, line) => {
-      if (typeof filePath !== "string") {
-        return;
+    vscode3.commands.registerCommand(
+      "strideShaderTools.openShader",
+      async (filePath, line) => {
+        if (typeof filePath !== "string") {
+          return;
+        }
+        await openShaderFile(filePath, line);
       }
-      await openShaderFile(filePath, line);
-    })
+    )
   );
   context.subscriptions.push(
-    vscode3.commands.registerCommand("strideShaderTools.openShaderLink", async (encodedArgs) => {
-      try {
-        const args = decodeURIComponent(encodedArgs);
-        const [filePath, isWorkspaceStr] = args.split("|");
-        const isWorkspaceShader = isWorkspaceStr === "true" || isWorkspaceStr === "True";
-        await openShaderFile(filePath, void 0, isWorkspaceShader);
-      } catch (error) {
-        console.error("Failed to open shader link:", error);
+    vscode3.commands.registerCommand(
+      "strideShaderTools.openShaderLink",
+      async (encodedArgs) => {
+        try {
+          const args = decodeURIComponent(encodedArgs);
+          const [filePath, isWorkspaceStr] = args.split("|");
+          const isWorkspaceShader = isWorkspaceStr === "true" || isWorkspaceStr === "True";
+          await openShaderFile(filePath, void 0, isWorkspaceShader);
+        } catch (error) {
+          console.error("Failed to open shader link:", error);
+        }
       }
-    })
+    )
   );
   context.subscriptions.push(
     vscode3.commands.registerCommand("strideShaderTools.refreshPanels", () => {
@@ -18565,13 +18601,13 @@ async function activate(context) {
   context.subscriptions.push(treeView);
   context.subscriptions.push(
     treeView.onDidExpandElement((e) => {
-      const nodeId = e.element.id ?? getNodeIdFromElement(e.element);
+      const nodeId = getNodeIdFromElement(e.element);
       if (nodeId) {
         unifiedTreeProvider.onNodeExpansionChanged(nodeId, false);
       }
     }),
     treeView.onDidCollapseElement((e) => {
-      const nodeId = e.element.id ?? getNodeIdFromElement(e.element);
+      const nodeId = getNodeIdFromElement(e.element);
       if (nodeId) {
         unifiedTreeProvider.onNodeExpansionChanged(nodeId, true);
       }
@@ -18587,119 +18623,137 @@ async function activate(context) {
   context.subscriptions.push(
     vscode3.workspace.onDidChangeTextDocument((event) => {
       if (event.document.languageId === "sdsl" && event.document === vscode3.window.activeTextEditor?.document) {
-        clearTimeout(globalThis.__sdslRefreshTimeout);
-        globalThis.__sdslRefreshTimeout = setTimeout(() => {
+        clearTimeout(refreshTimeout);
+        refreshTimeout = setTimeout(() => {
           unifiedTreeProvider.softRefresh();
         }, 500);
       }
     })
   );
   context.subscriptions.push(
-    vscode3.commands.registerCommand("strideShaderTools.addBaseShader", async (shaderName) => {
-      const editor = vscode3.window.activeTextEditor;
-      if (!editor || editor.document.languageId !== "sdsl") {
-        return;
+    vscode3.commands.registerCommand(
+      "strideShaderTools.addBaseShader",
+      async (shaderName) => {
+        const editor = vscode3.window.activeTextEditor;
+        if (!editor || editor.document.languageId !== "sdsl") {
+          return;
+        }
+        const document = editor.document;
+        const text = document.getText();
+        const shaderDeclRegex = /^(\s*shader\s+\w+(?:<[^>]+>)?)(\s*:\s*)?([\w\s,<>]*?)(\s*)(\{)/m;
+        const match = shaderDeclRegex.exec(text);
+        if (!match) {
+          vscode3.window.showWarningMessage(
+            "Could not find shader declaration in this file."
+          );
+          return;
+        }
+        const shaderPart = match[1];
+        const basesPart = match[3].trim();
+        const whitespace = match[4];
+        const brace = match[5];
+        let newDeclaration;
+        if (!basesPart) {
+          newDeclaration = `${shaderPart} : ${shaderName}${whitespace}${brace}`;
+        } else {
+          newDeclaration = `${shaderPart} : ${basesPart}, ${shaderName}${whitespace}${brace}`;
+        }
+        const startOffset = match.index;
+        const endOffset = startOffset + match[0].length;
+        const startPos = document.positionAt(startOffset);
+        const endPos = document.positionAt(endOffset);
+        const range = new vscode3.Range(startPos, endPos);
+        await editor.edit((editBuilder) => {
+          editBuilder.replace(range, newDeclaration);
+        });
+        vscode3.window.showInformationMessage(`Added base shader: ${shaderName}`);
       }
-      const document = editor.document;
-      const text = document.getText();
-      const shaderDeclRegex = /^(\s*shader\s+\w+(?:<[^>]+>)?)(\s*:\s*)?([\w\s,<>]*?)(\s*)(\{)/m;
-      const match = shaderDeclRegex.exec(text);
-      if (!match) {
-        vscode3.window.showWarningMessage("Could not find shader declaration in this file.");
-        return;
-      }
-      const shaderPart = match[1];
-      const basesPart = match[3].trim();
-      const whitespace = match[4];
-      const brace = match[5];
-      let newDeclaration;
-      if (!basesPart) {
-        newDeclaration = `${shaderPart} : ${shaderName}${whitespace}${brace}`;
-      } else {
-        newDeclaration = `${shaderPart} : ${basesPart}, ${shaderName}${whitespace}${brace}`;
-      }
-      const startOffset = match.index;
-      const endOffset = startOffset + match[0].length;
-      const startPos = document.positionAt(startOffset);
-      const endPos = document.positionAt(endOffset);
-      const range = new vscode3.Range(startPos, endPos);
-      await editor.edit((editBuilder) => {
-        editBuilder.replace(range, newDeclaration);
-      });
-      vscode3.window.showInformationMessage(`Added base shader: ${shaderName}`);
-    })
+    )
   );
   context.subscriptions.push(
-    vscode3.commands.registerCommand("strideShaderTools.removeBaseShader", async (shaderName) => {
-      const editor = vscode3.window.activeTextEditor;
-      if (!editor || editor.document.languageId !== "sdsl") {
-        return;
+    vscode3.commands.registerCommand(
+      "strideShaderTools.removeBaseShader",
+      async (shaderName) => {
+        const editor = vscode3.window.activeTextEditor;
+        if (!editor || editor.document.languageId !== "sdsl") {
+          return;
+        }
+        const document = editor.document;
+        const text = document.getText();
+        const shaderDeclRegex = /^(\s*shader\s+\w+(?:<[^>]+>)?)(\s*:\s*)([\w\s,<>]+?)(\s*)(\{)/m;
+        const match = shaderDeclRegex.exec(text);
+        if (!match) {
+          vscode3.window.showWarningMessage(
+            "Could not find shader declaration with base shaders."
+          );
+          return;
+        }
+        const shaderPart = match[1];
+        const basesPart = match[3].trim();
+        const whitespace = match[4];
+        const brace = match[5];
+        const bases = basesPart.split(",").map((s) => s.trim()).filter((s) => s);
+        const newBases = bases.filter((b) => b.toLowerCase() !== shaderName.toLowerCase());
+        if (newBases.length === bases.length) {
+          vscode3.window.showWarningMessage(
+            `Base shader '${shaderName}' not found in declaration.`
+          );
+          return;
+        }
+        let newDeclaration;
+        if (newBases.length === 0) {
+          newDeclaration = `${shaderPart}${whitespace}${brace}`;
+        } else {
+          newDeclaration = `${shaderPart} : ${newBases.join(", ")}${whitespace}${brace}`;
+        }
+        const startOffset = match.index;
+        const endOffset = startOffset + match[0].length;
+        const startPos = document.positionAt(startOffset);
+        const endPos = document.positionAt(endOffset);
+        const range = new vscode3.Range(startPos, endPos);
+        await editor.edit((editBuilder) => {
+          editBuilder.replace(range, newDeclaration);
+        });
+        vscode3.window.showInformationMessage(`Removed base shader: ${shaderName}`);
       }
-      const document = editor.document;
-      const text = document.getText();
-      const shaderDeclRegex = /^(\s*shader\s+\w+(?:<[^>]+>)?)(\s*:\s*)([\w\s,<>]+?)(\s*)(\{)/m;
-      const match = shaderDeclRegex.exec(text);
-      if (!match) {
-        vscode3.window.showWarningMessage("Could not find shader declaration with base shaders.");
-        return;
-      }
-      const shaderPart = match[1];
-      const basesPart = match[3].trim();
-      const whitespace = match[4];
-      const brace = match[5];
-      const bases = basesPart.split(",").map((s) => s.trim()).filter((s) => s);
-      const newBases = bases.filter((b) => b.toLowerCase() !== shaderName.toLowerCase());
-      if (newBases.length === bases.length) {
-        vscode3.window.showWarningMessage(`Base shader '${shaderName}' not found in declaration.`);
-        return;
-      }
-      let newDeclaration;
-      if (newBases.length === 0) {
-        newDeclaration = `${shaderPart}${whitespace}${brace}`;
-      } else {
-        newDeclaration = `${shaderPart} : ${newBases.join(", ")}${whitespace}${brace}`;
-      }
-      const startOffset = match.index;
-      const endOffset = startOffset + match[0].length;
-      const startPos = document.positionAt(startOffset);
-      const endPos = document.positionAt(endOffset);
-      const range = new vscode3.Range(startPos, endPos);
-      await editor.edit((editBuilder) => {
-        editBuilder.replace(range, newDeclaration);
-      });
-      vscode3.window.showInformationMessage(`Removed base shader: ${shaderName}`);
-    })
+    )
   );
   context.subscriptions.push(
-    vscode3.commands.registerCommand("strideShaderTools.renameFile", async (oldPath, newPath) => {
-      const oldUri = vscode3.Uri.file(oldPath);
-      const newUri = vscode3.Uri.file(newPath);
-      const edit = new vscode3.WorkspaceEdit();
-      edit.renameFile(oldUri, newUri);
-      await vscode3.workspace.applyEdit(edit);
-    })
+    vscode3.commands.registerCommand(
+      "strideShaderTools.renameFile",
+      async (oldPath, newPath) => {
+        const oldUri = vscode3.Uri.file(oldPath);
+        const newUri = vscode3.Uri.file(newPath);
+        const edit = new vscode3.WorkspaceEdit();
+        edit.renameFile(oldUri, newUri);
+        await vscode3.workspace.applyEdit(edit);
+      }
+    )
   );
   context.subscriptions.push(
-    vscode3.commands.registerCommand("strideShaderTools.renameShaderInFile", async (newName) => {
-      const editor = vscode3.window.activeTextEditor;
-      if (!editor || editor.document.languageId !== "sdsl") {
-        return;
+    vscode3.commands.registerCommand(
+      "strideShaderTools.renameShaderInFile",
+      async (newName) => {
+        const editor = vscode3.window.activeTextEditor;
+        if (!editor || editor.document.languageId !== "sdsl") {
+          return;
+        }
+        const text = editor.document.getText();
+        const shaderDeclRegex = /(\bshader\s+)(\w+)(\s*[:<{])/;
+        const match = shaderDeclRegex.exec(text);
+        if (!match) {
+          vscode3.window.showWarningMessage("Could not find shader declaration.");
+          return;
+        }
+        const startOffset = match.index + match[1].length;
+        const endOffset = startOffset + match[2].length;
+        const startPos = editor.document.positionAt(startOffset);
+        const endPos = editor.document.positionAt(endOffset);
+        await editor.edit((editBuilder) => {
+          editBuilder.replace(new vscode3.Range(startPos, endPos), newName);
+        });
       }
-      const text = editor.document.getText();
-      const shaderDeclRegex = /(\bshader\s+)(\w+)(\s*[:<{])/;
-      const match = shaderDeclRegex.exec(text);
-      if (!match) {
-        vscode3.window.showWarningMessage("Could not find shader declaration.");
-        return;
-      }
-      const startOffset = match.index + match[1].length;
-      const endOffset = startOffset + match[2].length;
-      const startPos = editor.document.positionAt(startOffset);
-      const endPos = editor.document.positionAt(endOffset);
-      await editor.edit((editBuilder) => {
-        editBuilder.replace(new vscode3.Range(startPos, endPos), newName);
-      });
-    })
+    )
   );
   context.subscriptions.push(
     vscode3.languages.registerHoverProvider("sdsl", new DiagnosticHoverProvider())
@@ -18855,21 +18909,29 @@ function transformHoverWithClickableLinks(hover) {
       const commandUri = `command:strideShaderTools.removeBaseShader?${args}`;
       return `[Remove ${shaderName}](${commandUri})`;
     });
-    newText = newText.replace(RENAME_FILE_REGEX, (_match, newName, oldPath, newPath) => {
-      const args = encodeURIComponent(JSON.stringify([oldPath.trim(), newPath.trim()]));
-      const commandUri = `command:strideShaderTools.renameFile?${args}`;
-      return `[Rename file to ${newName.trim()}](${commandUri})`;
-    });
+    newText = newText.replace(
+      RENAME_FILE_REGEX,
+      (_match, newName, oldPath, newPath) => {
+        const args = encodeURIComponent(JSON.stringify([oldPath.trim(), newPath.trim()]));
+        const commandUri = `command:strideShaderTools.renameFile?${args}`;
+        return `[Rename file to ${newName.trim()}](${commandUri})`;
+      }
+    );
     newText = newText.replace(RENAME_SHADER_REGEX, (_match, newName) => {
       const args = encodeURIComponent(JSON.stringify([newName]));
       const commandUri = `command:strideShaderTools.renameShaderInFile?${args}`;
       return `[Rename shader to ${newName}](${commandUri})`;
     });
-    newText = newText.replace(OPEN_FILE_REGEX, (_match, displayPath, fullPath, line) => {
-      const args = encodeURIComponent(JSON.stringify([fullPath.trim(), parseInt(line, 10)]));
-      const commandUri = `command:strideShaderTools.openShader?${args}`;
-      return `[${displayPath.trim()}](${commandUri})`;
-    });
+    newText = newText.replace(
+      OPEN_FILE_REGEX,
+      (_match, displayPath, fullPath, line) => {
+        const args = encodeURIComponent(
+          JSON.stringify([fullPath.trim(), Number.parseInt(line, 10)])
+        );
+        const commandUri = `command:strideShaderTools.openShader?${args}`;
+        return `[${displayPath.trim()}](${commandUri})`;
+      }
+    );
     const md = new vscode3.MarkdownString(newText);
     md.isTrusted = true;
     return md;
@@ -18911,7 +18973,10 @@ async function openShaderFile(filePath, line, isWorkspaceShader) {
     }
     if (!isEditable) {
       const shaderName = path.basename(filePath, ".sdsl");
-      vscode3.window.setStatusBarMessage(`\u{1F4D6} ${shaderName} (External shader - read-only)`, 5e3);
+      vscode3.window.setStatusBarMessage(
+        `\u{1F4D6} ${shaderName} (External shader - read-only)`,
+        5e3
+      );
     }
   } catch (error) {
     console.error("Failed to open shader file:", error);
@@ -18942,7 +19007,7 @@ function getNodeIdFromElement(element) {
   return void 0;
 }
 function deactivate() {
-  clearTimeout(globalThis.__sdslRefreshTimeout);
+  clearTimeout(refreshTimeout);
   if (!client) {
     return void 0;
   }

@@ -4,5 +4,5 @@ export type {
     MemberInfo,
     MemberGroup,
     InheritanceTreeResponse,
-    ShaderMembersResponse
+    ShaderMembersResponse,
 } from './UnifiedTreeProvider';
