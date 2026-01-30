@@ -3,7 +3,7 @@
   "displayName": "Stride SDSL Shader Tools",
   "description": "IntelliSense, (future) debugging, and assistance for Stride and vvvv SDSL shaders",
   "icon": "icons/icon.png",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "publisher": "tebjan",
   "engines": {
     "vscode": "^1.95.0"
@@ -173,5 +173,5 @@
     "type": "git",
     "url": "https://github.com/tebjan/Stride.ShaderExplorer"
   },
-  "license": "MIT"
+  "license": "GPL-3.0"
 }
