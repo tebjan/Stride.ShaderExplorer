@@ -1,0 +1,75 @@
+name: Release Extension
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g., 0.2.0)'
+        required: true
+      pre-release:
+        description: 'Publish as pre-release?'
+        type: boolean
+        default: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Get version and release type from tag
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+            echo "PRE_RELEASE=${{ github.event.inputs.pre-release }}" >> $GITHUB_OUTPUT
+          else
+            VERSION="${GITHUB_REF#refs/tags/v}"
+            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+            if [[ "$VERSION" == *"-"* ]]; then
+              echo "PRE_RELEASE=true" >> $GITHUB_OUTPUT
+            else
+              echo "PRE_RELEASE=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Build Language Server
+        run: |
+          dotnet publish VSCode/language-server/StrideShaderLanguageServer.csproj \
+            -c Release \
+            -o VSCode/vscode-extension/server \
+            --no-self-contained
+
+      - name: Install extension dependencies
+        working-directory: VSCode/vscode-extension
+        run: npm ci
+
+      - name: Lint extension
+        working-directory: VSCode/vscode-extension
+        run: npm run lint
+
+      - name: Package extension
+        working-directory: VSCode/vscode-extension
+        run: npm run package
+
+      - name: Publish to VS Marketplace
+        working-directory: VSCode/vscode-extension
+        run: |
+          if [ "${{ steps.version.outputs.PRE_RELEASE }}" = "true" ]; then
+            npx vsce publish ${{ steps.version.outputs.VERSION }} --pre-release
+          else
+            npx vsce publish ${{ steps.version.outputs.VERSION }}
+          fi
+        env:
+          VSCE_PAT: ${{ secrets.VS_MARKETPLACE_TOKEN }}

@@ -3406,8 +3406,8 @@ var require_main2 = __commonJS({
         }
         Position2.is = is;
       })(Position || (exports3.Position = Position = {}));
-      var Range;
-      (function(Range2) {
+      var Range2;
+      (function(Range3) {
         function create(one, two, three, four) {
           if (Is.uinteger(one) && Is.uinteger(two) && Is.uinteger(three) && Is.uinteger(four)) {
             return { start: Position.create(one, two), end: Position.create(three, four) };
@@ -3417,13 +3417,13 @@ var require_main2 = __commonJS({
             throw new Error("Range#create called with invalid arguments[".concat(one, ", ").concat(two, ", ").concat(three, ", ").concat(four, "]"));
           }
         }
-        Range2.create = create;
+        Range3.create = create;
         function is(value) {
           var candidate = value;
           return Is.objectLiteral(candidate) && Position.is(candidate.start) && Position.is(candidate.end);
         }
-        Range2.is = is;
-      })(Range || (exports3.Range = Range = {}));
+        Range3.is = is;
+      })(Range2 || (exports3.Range = Range2 = {}));
       var Location;
       (function(Location2) {
         function create(uri, range) {
@@ -3432,7 +3432,7 @@ var require_main2 = __commonJS({
         Location2.create = create;
         function is(value) {
           var candidate = value;
-          return Is.objectLiteral(candidate) && Range.is(candidate.range) && (Is.string(candidate.uri) || Is.undefined(candidate.uri));
+          return Is.objectLiteral(candidate) && Range2.is(candidate.range) && (Is.string(candidate.uri) || Is.undefined(candidate.uri));
         }
         Location2.is = is;
       })(Location || (exports3.Location = Location = {}));
@@ -3444,7 +3444,7 @@ var require_main2 = __commonJS({
         LocationLink2.create = create;
         function is(value) {
           var candidate = value;
-          return Is.objectLiteral(candidate) && Range.is(candidate.targetRange) && Is.string(candidate.targetUri) && Range.is(candidate.targetSelectionRange) && (Range.is(candidate.originSelectionRange) || Is.undefined(candidate.originSelectionRange));
+          return Is.objectLiteral(candidate) && Range2.is(candidate.targetRange) && Is.string(candidate.targetUri) && Range2.is(candidate.targetSelectionRange) && (Range2.is(candidate.originSelectionRange) || Is.undefined(candidate.originSelectionRange));
         }
         LocationLink2.is = is;
       })(LocationLink || (exports3.LocationLink = LocationLink = {}));
@@ -3476,7 +3476,7 @@ var require_main2 = __commonJS({
         ColorInformation2.create = create;
         function is(value) {
           var candidate = value;
-          return Is.objectLiteral(candidate) && Range.is(candidate.range) && Color.is(candidate.color);
+          return Is.objectLiteral(candidate) && Range2.is(candidate.range) && Color.is(candidate.color);
         }
         ColorInformation2.is = is;
       })(ColorInformation || (exports3.ColorInformation = ColorInformation = {}));
@@ -3587,7 +3587,7 @@ var require_main2 = __commonJS({
         function is(value) {
           var _a;
           var candidate = value;
-          return Is.defined(candidate) && Range.is(candidate.range) && Is.string(candidate.message) && (Is.number(candidate.severity) || Is.undefined(candidate.severity)) && (Is.integer(candidate.code) || Is.string(candidate.code) || Is.undefined(candidate.code)) && (Is.undefined(candidate.codeDescription) || Is.string((_a = candidate.codeDescription) === null || _a === void 0 ? void 0 : _a.href)) && (Is.string(candidate.source) || Is.undefined(candidate.source)) && (Is.undefined(candidate.relatedInformation) || Is.typedArray(candidate.relatedInformation, DiagnosticRelatedInformation.is));
+          return Is.defined(candidate) && Range2.is(candidate.range) && Is.string(candidate.message) && (Is.number(candidate.severity) || Is.undefined(candidate.severity)) && (Is.integer(candidate.code) || Is.string(candidate.code) || Is.undefined(candidate.code)) && (Is.undefined(candidate.codeDescription) || Is.string((_a = candidate.codeDescription) === null || _a === void 0 ? void 0 : _a.href)) && (Is.string(candidate.source) || Is.undefined(candidate.source)) && (Is.undefined(candidate.relatedInformation) || Is.typedArray(candidate.relatedInformation, DiagnosticRelatedInformation.is));
         }
         Diagnostic2.is = is;
       })(Diagnostic || (exports3.Diagnostic = Diagnostic = {}));
@@ -3627,7 +3627,7 @@ var require_main2 = __commonJS({
         TextEdit2.del = del;
         function is(value) {
           var candidate = value;
-          return Is.objectLiteral(candidate) && Is.string(candidate.newText) && Range.is(candidate.range);
+          return Is.objectLiteral(candidate) && Is.string(candidate.newText) && Range2.is(candidate.range);
         }
         TextEdit2.is = is;
       })(TextEdit || (exports3.TextEdit = TextEdit = {}));
@@ -4171,7 +4171,7 @@ var require_main2 = __commonJS({
         InsertReplaceEdit2.create = create;
         function is(value) {
           var candidate = value;
-          return candidate && Is.string(candidate.newText) && Range.is(candidate.insert) && Range.is(candidate.replace);
+          return candidate && Is.string(candidate.newText) && Range2.is(candidate.insert) && Range2.is(candidate.replace);
         }
         InsertReplaceEdit2.is = is;
       })(InsertReplaceEdit || (exports3.InsertReplaceEdit = InsertReplaceEdit = {}));
@@ -4214,14 +4214,14 @@ var require_main2 = __commonJS({
         }
         MarkedString2.is = is;
       })(MarkedString || (exports3.MarkedString = MarkedString = {}));
-      var Hover;
-      (function(Hover2) {
+      var Hover2;
+      (function(Hover3) {
         function is(value) {
           var candidate = value;
-          return !!candidate && Is.objectLiteral(candidate) && (MarkupContent.is(candidate.contents) || MarkedString.is(candidate.contents) || Is.typedArray(candidate.contents, MarkedString.is)) && (value.range === void 0 || Range.is(value.range));
+          return !!candidate && Is.objectLiteral(candidate) && (MarkupContent.is(candidate.contents) || MarkedString.is(candidate.contents) || Is.typedArray(candidate.contents, MarkedString.is)) && (value.range === void 0 || Range2.is(value.range));
         }
-        Hover2.is = is;
-      })(Hover || (exports3.Hover = Hover = {}));
+        Hover3.is = is;
+      })(Hover2 || (exports3.Hover = Hover2 = {}));
       var ParameterInformation;
       (function(ParameterInformation2) {
         function create(label, documentation) {
@@ -4339,7 +4339,7 @@ var require_main2 = __commonJS({
         DocumentSymbol2.create = create;
         function is(value) {
           var candidate = value;
-          return candidate && Is.string(candidate.name) && Is.number(candidate.kind) && Range.is(candidate.range) && Range.is(candidate.selectionRange) && (candidate.detail === void 0 || Is.string(candidate.detail)) && (candidate.deprecated === void 0 || Is.boolean(candidate.deprecated)) && (candidate.children === void 0 || Array.isArray(candidate.children)) && (candidate.tags === void 0 || Array.isArray(candidate.tags));
+          return candidate && Is.string(candidate.name) && Is.number(candidate.kind) && Range2.is(candidate.range) && Range2.is(candidate.selectionRange) && (candidate.detail === void 0 || Is.string(candidate.detail)) && (candidate.deprecated === void 0 || Is.boolean(candidate.deprecated)) && (candidate.children === void 0 || Array.isArray(candidate.children)) && (candidate.tags === void 0 || Array.isArray(candidate.tags));
         }
         DocumentSymbol2.is = is;
       })(DocumentSymbol || (exports3.DocumentSymbol = DocumentSymbol = {}));
@@ -4416,7 +4416,7 @@ var require_main2 = __commonJS({
         CodeLens2.create = create;
         function is(value) {
           var candidate = value;
-          return Is.defined(candidate) && Range.is(candidate.range) && (Is.undefined(candidate.command) || Command.is(candidate.command));
+          return Is.defined(candidate) && Range2.is(candidate.range) && (Is.undefined(candidate.command) || Command.is(candidate.command));
         }
         CodeLens2.is = is;
       })(CodeLens || (exports3.CodeLens = CodeLens = {}));
@@ -4440,7 +4440,7 @@ var require_main2 = __commonJS({
         DocumentLink2.create = create;
         function is(value) {
           var candidate = value;
-          return Is.defined(candidate) && Range.is(candidate.range) && (Is.undefined(candidate.target) || Is.string(candidate.target));
+          return Is.defined(candidate) && Range2.is(candidate.range) && (Is.undefined(candidate.target) || Is.string(candidate.target));
         }
         DocumentLink2.is = is;
       })(DocumentLink || (exports3.DocumentLink = DocumentLink = {}));
@@ -4452,7 +4452,7 @@ var require_main2 = __commonJS({
         SelectionRange2.create = create;
         function is(value) {
           var candidate = value;
-          return Is.objectLiteral(candidate) && Range.is(candidate.range) && (candidate.parent === void 0 || SelectionRange2.is(candidate.parent));
+          return Is.objectLiteral(candidate) && Range2.is(candidate.range) && (candidate.parent === void 0 || SelectionRange2.is(candidate.parent));
         }
         SelectionRange2.is = is;
       })(SelectionRange || (exports3.SelectionRange = SelectionRange = {}));
@@ -4511,7 +4511,7 @@ var require_main2 = __commonJS({
         InlineValueText2.create = create;
         function is(value) {
           var candidate = value;
-          return candidate !== void 0 && candidate !== null && Range.is(candidate.range) && Is.string(candidate.text);
+          return candidate !== void 0 && candidate !== null && Range2.is(candidate.range) && Is.string(candidate.text);
         }
         InlineValueText2.is = is;
       })(InlineValueText || (exports3.InlineValueText = InlineValueText = {}));
@@ -4523,7 +4523,7 @@ var require_main2 = __commonJS({
         InlineValueVariableLookup2.create = create;
         function is(value) {
           var candidate = value;
-          return candidate !== void 0 && candidate !== null && Range.is(candidate.range) && Is.boolean(candidate.caseSensitiveLookup) && (Is.string(candidate.variableName) || candidate.variableName === void 0);
+          return candidate !== void 0 && candidate !== null && Range2.is(candidate.range) && Is.boolean(candidate.caseSensitiveLookup) && (Is.string(candidate.variableName) || candidate.variableName === void 0);
         }
         InlineValueVariableLookup2.is = is;
       })(InlineValueVariableLookup || (exports3.InlineValueVariableLookup = InlineValueVariableLookup = {}));
@@ -4535,7 +4535,7 @@ var require_main2 = __commonJS({
         InlineValueEvaluatableExpression2.create = create;
         function is(value) {
           var candidate = value;
-          return candidate !== void 0 && candidate !== null && Range.is(candidate.range) && (Is.string(candidate.expression) || candidate.expression === void 0);
+          return candidate !== void 0 && candidate !== null && Range2.is(candidate.range) && (Is.string(candidate.expression) || candidate.expression === void 0);
         }
         InlineValueEvaluatableExpression2.is = is;
       })(InlineValueEvaluatableExpression || (exports3.InlineValueEvaluatableExpression = InlineValueEvaluatableExpression = {}));
@@ -4547,7 +4547,7 @@ var require_main2 = __commonJS({
         InlineValueContext2.create = create;
         function is(value) {
           var candidate = value;
-          return Is.defined(candidate) && Range.is(value.stoppedLocation);
+          return Is.defined(candidate) && Range2.is(value.stoppedLocation);
         }
         InlineValueContext2.is = is;
       })(InlineValueContext || (exports3.InlineValueContext = InlineValueContext = {}));
@@ -16997,12 +16997,12 @@ var require_comparator = __commonJS({
           if (this.value === "") {
             return true;
           }
-          return new Range(comp.value, options).test(this.value);
+          return new Range2(comp.value, options).test(this.value);
         } else if (comp.operator === "") {
           if (comp.value === "") {
             return true;
           }
-          return new Range(this.value, options).test(comp.semver);
+          return new Range2(this.value, options).test(comp.semver);
         }
         options = parseOptions(options);
         if (options.includePrerelease && (this.value === "<0.0.0-0" || comp.value === "<0.0.0-0")) {
@@ -17035,7 +17035,7 @@ var require_comparator = __commonJS({
     var cmp = require_cmp();
     var debug = require_debug();
     var SemVer = require_semver();
-    var Range = require_range();
+    var Range2 = require_range();
   }
 });
 
@@ -17044,7 +17044,7 @@ var require_range = __commonJS({
   "node_modules/semver/classes/range.js"(exports2, module2) {
     "use strict";
     var SPACE_CHARACTERS = /\s+/g;
-    var Range = class _Range {
+    var Range2 = class _Range {
       constructor(range, options) {
         options = parseOptions(options);
         if (range instanceof _Range) {
@@ -17182,7 +17182,7 @@ var require_range = __commonJS({
         return false;
       }
     };
-    module2.exports = Range;
+    module2.exports = Range2;
     var LRU = require_lrucache();
     var cache = new LRU();
     var parseOptions = require_parse_options();
@@ -17420,10 +17420,10 @@ var require_range = __commonJS({
 var require_satisfies = __commonJS({
   "node_modules/semver/functions/satisfies.js"(exports2, module2) {
     "use strict";
-    var Range = require_range();
+    var Range2 = require_range();
     var satisfies = (version, range, options) => {
       try {
-        range = new Range(range, options);
+        range = new Range2(range, options);
       } catch (er) {
         return false;
       }
@@ -17491,7 +17491,7 @@ var require_main4 = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.SettingMonitor = exports2.LanguageClient = exports2.TransportKind = void 0;
     var cp = require("child_process");
-    var fs = require("fs");
+    var fs2 = require("fs");
     var path2 = require("path");
     var vscode_1 = require("vscode");
     var Is = require_is();
@@ -17645,8 +17645,8 @@ var require_main4 = __commonJS({
         }
       }
       createMessageTransports(encoding) {
-        function getEnvironment(env2, fork) {
-          if (!env2 && !fork) {
+        function getEnvironment(env, fork) {
+          if (!env && !fork) {
             return void 0;
           }
           const result = /* @__PURE__ */ Object.create(null);
@@ -17655,8 +17655,8 @@ var require_main4 = __commonJS({
             result["ELECTRON_RUN_AS_NODE"] = "1";
             result["ELECTRON_NO_ASAR"] = "1";
           }
-          if (env2) {
-            Object.keys(env2).forEach((key) => result[key] = env2[key]);
+          if (env) {
+            Object.keys(env).forEach((key) => result[key] = env[key]);
           }
           return result;
         }
@@ -17916,13 +17916,13 @@ var require_main4 = __commonJS({
         const mainRootPath = this._mainGetRootPath();
         if (mainRootPath !== void 0) {
           const result = path2.join(mainRootPath, runtime);
-          if (fs.existsSync(result)) {
+          if (fs2.existsSync(result)) {
             return result;
           }
         }
         if (serverWorkingDirectory !== void 0) {
           const result = path2.join(serverWorkingDirectory, runtime);
-          if (fs.existsSync(result)) {
+          if (fs2.existsSync(result)) {
             return result;
           }
         }
@@ -17946,7 +17946,7 @@ var require_main4 = __commonJS({
         }
         if (cwd) {
           return new Promise((s) => {
-            fs.lstat(cwd, (err, stats) => {
+            fs2.lstat(cwd, (err, stats) => {
               s(!err && stats.isDirectory() ? cwd : void 0);
             });
           });
@@ -18012,26 +18012,16 @@ __export(extension_exports, {
   deactivate: () => deactivate
 });
 module.exports = __toCommonJS(extension_exports);
-var import_node_child_process = require("node:child_process");
+var fs = __toESM(require("node:fs"));
 var path = __toESM(require("node:path"));
 var vscode = __toESM(require("vscode"));
 var import_node = __toESM(require_node3());
+var EXTENSION_ID = "tebjan.stride-shader-tools";
 var client;
+var ADD_SHADER_REGEX = /Add:\s+(\w+)/g;
+var REMOVE_SHADER_REGEX = /Remove:\s+(\w+)/g;
 async function activate(context) {
   console.log("Stride Shader Tools is activating...");
-  const dotnetAvailable = await checkDotNetSdk();
-  if (!dotnetAvailable) {
-    const choice = await vscode.window.showErrorMessage(
-      "Stride Shader Tools requires .NET 8 SDK. Please install it to enable IntelliSense.",
-      "Download .NET 8",
-      "Ignore"
-    );
-    if (choice === "Download .NET 8") {
-      vscode.env.openExternal(
-        vscode.Uri.parse("https://dotnet.microsoft.com/download/dotnet/8.0")
-      );
-    }
-  }
   context.subscriptions.push(
     vscode.commands.registerCommand("strideShaderTools.restartServer", async () => {
       if (client) {
@@ -18046,53 +18036,168 @@ async function activate(context) {
       vscode.window.showInformationMessage("Inheritance Tree panel coming soon!");
     })
   );
-  if (dotnetAvailable) {
-    await startLanguageServer(context);
-  }
+  context.subscriptions.push(
+    vscode.commands.registerCommand("strideShaderTools.addBaseShader", async (shaderName) => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor || editor.document.languageId !== "sdsl") {
+        return;
+      }
+      const document = editor.document;
+      const text = document.getText();
+      const shaderDeclRegex = /^(\s*shader\s+\w+)(\s*:\s*)?([\w\s,<>]*?)(\s*)(\{)/m;
+      const match = shaderDeclRegex.exec(text);
+      if (!match) {
+        vscode.window.showWarningMessage("Could not find shader declaration in this file.");
+        return;
+      }
+      const shaderPart = match[1];
+      const basesPart = match[3].trim();
+      const whitespace = match[4];
+      const brace = match[5];
+      let newDeclaration;
+      if (!basesPart) {
+        newDeclaration = `${shaderPart} : ${shaderName}${whitespace}${brace}`;
+      } else {
+        newDeclaration = `${shaderPart} : ${basesPart}, ${shaderName}${whitespace}${brace}`;
+      }
+      const startOffset = match.index;
+      const endOffset = startOffset + match[0].length;
+      const startPos = document.positionAt(startOffset);
+      const endPos = document.positionAt(endOffset);
+      const range = new vscode.Range(startPos, endPos);
+      await editor.edit((editBuilder) => {
+        editBuilder.replace(range, newDeclaration);
+      });
+      vscode.window.showInformationMessage(`Added base shader: ${shaderName}`);
+    })
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand("strideShaderTools.removeBaseShader", async (shaderName) => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor || editor.document.languageId !== "sdsl") {
+        return;
+      }
+      const document = editor.document;
+      const text = document.getText();
+      const shaderDeclRegex = /^(\s*shader\s+\w+)(\s*:\s*)([\w\s,<>]+?)(\s*)(\{)/m;
+      const match = shaderDeclRegex.exec(text);
+      if (!match) {
+        vscode.window.showWarningMessage("Could not find shader declaration with base shaders.");
+        return;
+      }
+      const shaderPart = match[1];
+      const basesPart = match[3].trim();
+      const whitespace = match[4];
+      const brace = match[5];
+      const bases = basesPart.split(",").map((s) => s.trim()).filter((s) => s);
+      const newBases = bases.filter((b) => b.toLowerCase() !== shaderName.toLowerCase());
+      if (newBases.length === bases.length) {
+        vscode.window.showWarningMessage(`Base shader '${shaderName}' not found in declaration.`);
+        return;
+      }
+      let newDeclaration;
+      if (newBases.length === 0) {
+        newDeclaration = `${shaderPart}${whitespace}${brace}`;
+      } else {
+        newDeclaration = `${shaderPart} : ${newBases.join(", ")}${whitespace}${brace}`;
+      }
+      const startOffset = match.index;
+      const endOffset = startOffset + match[0].length;
+      const startPos = document.positionAt(startOffset);
+      const endPos = document.positionAt(endOffset);
+      const range = new vscode.Range(startPos, endPos);
+      await editor.edit((editBuilder) => {
+        editBuilder.replace(range, newDeclaration);
+      });
+      vscode.window.showInformationMessage(`Removed base shader: ${shaderName}`);
+    })
+  );
+  context.subscriptions.push(
+    vscode.languages.registerHoverProvider("sdsl", new DiagnosticHoverProvider())
+  );
+  await startLanguageServer(context);
   console.log("Stride Shader Tools activated!");
 }
-async function checkDotNetSdk() {
-  return new Promise((resolve) => {
-    const process2 = (0, import_node_child_process.spawn)("dotnet", ["--list-sdks"], { shell: true });
-    let output = "";
-    process2.stdout.on("data", (data) => {
-      output += data.toString();
-    });
-    process2.on("close", (code) => {
-      if (code === 0 && output.includes("8.")) {
-        resolve(true);
-      } else {
-        resolve(false);
+async function acquireDotNetRuntime() {
+  try {
+    const result = await vscode.commands.executeCommand(
+      "dotnet.acquire",
+      {
+        version: "8.0",
+        requestingExtensionId: EXTENSION_ID
       }
-    });
-    process2.on("error", () => {
-      resolve(false);
-    });
-    setTimeout(() => resolve(false), 5e3);
-  });
-}
-async function startLanguageServer(context) {
-  const config = vscode.workspace.getConfiguration("strideShaderTools");
-  let serverPath = config.get("languageServer.path");
-  if (!serverPath) {
-    serverPath = path.join(
-      context.extensionPath,
-      "..",
-      "language-server"
     );
+    if (result?.dotnetPath) {
+      console.log("Acquired .NET runtime at:", result.dotnetPath);
+      return result.dotnetPath;
+    }
+  } catch (error) {
+    console.error("Failed to acquire .NET runtime:", error);
   }
-  const serverOptions = {
+  return void 0;
+}
+function createDllServerOptions(dotnetPath, dllPath) {
+  return {
+    run: {
+      command: dotnetPath,
+      args: [dllPath],
+      transport: import_node.TransportKind.stdio
+    },
+    debug: {
+      command: dotnetPath,
+      args: [dllPath, "--debug"],
+      transport: import_node.TransportKind.stdio
+    }
+  };
+}
+function createProjectServerOptions(projectPath) {
+  return {
     run: {
       command: "dotnet",
-      args: ["run", "--project", serverPath],
+      args: ["run", "--project", projectPath],
       transport: import_node.TransportKind.stdio
     },
     debug: {
       command: "dotnet",
-      args: ["run", "--project", serverPath, "--", "--debug"],
+      args: ["run", "--project", projectPath, "--", "--debug"],
       transport: import_node.TransportKind.stdio
     }
   };
+}
+async function startLanguageServer(context) {
+  const config = vscode.workspace.getConfiguration("strideShaderTools");
+  const configuredPath = config.get("languageServer.path");
+  const bundledDll = path.join(context.extensionPath, "server", "StrideShaderLanguageServer.dll");
+  const isProductionMode = fs.existsSync(bundledDll);
+  let serverOptions;
+  if (configuredPath) {
+    const dotnetPath = await acquireDotNetRuntime();
+    if (!dotnetPath) {
+      vscode.window.showErrorMessage(
+        "Failed to acquire .NET 8 Runtime. Language server cannot start."
+      );
+      return;
+    }
+    if (configuredPath.endsWith(".dll")) {
+      serverOptions = createDllServerOptions(dotnetPath, configuredPath);
+    } else {
+      serverOptions = createProjectServerOptions(configuredPath);
+    }
+  } else if (isProductionMode) {
+    console.log("Using bundled language server:", bundledDll);
+    const dotnetPath = await acquireDotNetRuntime();
+    if (!dotnetPath) {
+      vscode.window.showErrorMessage(
+        "Failed to acquire .NET 8 Runtime. Language server cannot start. Please install .NET 8 Runtime manually from https://dotnet.microsoft.com/download/dotnet/8.0"
+      );
+      return;
+    }
+    serverOptions = createDllServerOptions(dotnetPath, bundledDll);
+  } else {
+    const devProjectPath = path.join(context.extensionPath, "..", "language-server");
+    console.log("Using development language server:", devProjectPath);
+    serverOptions = createProjectServerOptions(devProjectPath);
+  }
   const additionalPaths = config.get("shaderPaths") || [];
   const clientOptions = {
     documentSelector: [{ scheme: "file", language: "sdsl" }],
@@ -18103,7 +18208,15 @@ async function startLanguageServer(context) {
       additionalShaderPaths: additionalPaths,
       workspaceFolders: vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath) || []
     },
-    outputChannelName: "Stride Shader Language Server"
+    outputChannelName: "Stride Shader Language Server",
+    middleware: {
+      // Intercept hover responses to add clickable command links
+      provideHover: async (document, position, token, next) => {
+        const result = await next(document, position, token);
+        if (!result) return result;
+        return transformHoverWithClickableLinks(result);
+      }
+    }
   };
   client = new import_node.LanguageClient(
     "strideShaderLanguageServer",
@@ -18121,6 +18234,40 @@ async function startLanguageServer(context) {
     );
   }
   context.subscriptions.push(client);
+}
+var DiagnosticHoverProvider = class {
+  provideHover(_document, _position, _token) {
+    return null;
+  }
+};
+function transformHoverWithClickableLinks(hover) {
+  const transformContent = (content) => {
+    let text;
+    if (typeof content === "string") {
+      text = content;
+    } else if (content instanceof vscode.MarkdownString) {
+      text = content.value;
+    } else if ("value" in content) {
+      text = content.value;
+    } else {
+      return new vscode.MarkdownString(String(content));
+    }
+    let newText = text.replace(ADD_SHADER_REGEX, (_match, shaderName) => {
+      const args = encodeURIComponent(JSON.stringify([shaderName]));
+      const commandUri = `command:strideShaderTools.addBaseShader?${args}`;
+      return `[${shaderName}](${commandUri})`;
+    });
+    newText = newText.replace(REMOVE_SHADER_REGEX, (_match, shaderName) => {
+      const args = encodeURIComponent(JSON.stringify([shaderName]));
+      const commandUri = `command:strideShaderTools.removeBaseShader?${args}`;
+      return `[Remove ${shaderName}](${commandUri})`;
+    });
+    const md = new vscode.MarkdownString(newText);
+    md.isTrusted = true;
+    return md;
+  };
+  const newContents = hover.contents.map(transformContent);
+  return new vscode.Hover(newContents, hover.range);
 }
 function deactivate() {
   if (!client) {

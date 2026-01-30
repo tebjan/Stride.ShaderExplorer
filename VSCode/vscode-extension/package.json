@@ -4,7 +4,7 @@
   "description": "IntelliSense, debugging, and AI assistance for Stride SDSL shaders",
   "icon": "icons/icon.png",
   "version": "0.1.0",
-  "publisher": "stride-community",
+  "publisher": "tebjan",
   "engines": {
     "vscode": "^1.95.0"
   },
@@ -20,6 +20,13 @@
     "hlsl",
     "game engine"
   ],
+  "extensionDependencies": [
+    "ms-dotnettools.vscode-dotnet-runtime"
+  ],
+  "x-dotnet-acquire": {
+    "version": "8.0",
+    "mode": "runtime"
+  },
   "main": "./dist/extension.js",
   "contributes": {
     "languages": [
@@ -82,6 +89,14 @@
       {
         "command": "strideShaderTools.showInheritanceTree",
         "title": "Stride Shaders: Show Inheritance Tree"
+      },
+      {
+        "command": "strideShaderTools.addBaseShader",
+        "title": "Stride Shaders: Add Base Shader"
+      },
+      {
+        "command": "strideShaderTools.removeBaseShader",
+        "title": "Stride Shaders: Remove Base Shader"
       }
     ]
   },
