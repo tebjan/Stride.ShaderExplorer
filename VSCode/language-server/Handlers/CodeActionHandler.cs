@@ -53,7 +53,7 @@ public class CodeActionHandler : CodeActionHandlerBase
 
         var path = uri.GetFileSystemPath();
         var shaderName = Path.GetFileNameWithoutExtension(path);
-        var currentShader = _workspace.GetParsedShader(shaderName);
+        var currentShader = _workspace.GetParsedShaderClosest(shaderName, path);
 
         var actions = new List<CommandOrCodeAction>();
 
@@ -72,7 +72,7 @@ public class CodeActionHandler : CodeActionHandlerBase
                 {
                     var undefinedName = match.Groups[1].Value;
                     var fixActions = CreateAddBaseShaderActions(
-                        uri, content, undefinedName, diagnostic.Range, currentShader);
+                        uri, content, undefinedName, diagnostic.Range, currentShader, path);
                     actions.AddRange(fixActions);
                 }
             }
@@ -114,7 +114,8 @@ public class CodeActionHandler : CodeActionHandlerBase
         string content,
         string undefinedName,
         Range diagnosticRange,
-        ParsedShader? currentShader)
+        ParsedShader? currentShader,
+        string? contextFilePath = null)
     {
         var actions = new List<CommandOrCodeAction>();
 
@@ -131,11 +132,11 @@ public class CodeActionHandler : CodeActionHandlerBase
         foreach (var s in shadersWithVariable) candidateShaders.Add(s);
         foreach (var s in shadersWithMethod) candidateShaders.Add(s);
 
-        // Filter out shaders that are already inherited
+        // Filter out shaders that are already inherited - use context-aware resolution
         if (currentShader != null)
         {
             var alreadyInherited = new HashSet<string>(currentShader.BaseShaderNames);
-            var inheritanceChain = _inheritanceResolver.ResolveInheritanceChain(currentShader.Name);
+            var inheritanceChain = _inheritanceResolver.ResolveInheritanceChain(currentShader.Name, contextFilePath);
             foreach (var baseShader in inheritanceChain)
             {
                 alreadyInherited.Add(baseShader.Name);

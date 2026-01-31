@@ -13,6 +13,7 @@ public class ShaderWorkspace
     private readonly List<(string Path, ShaderSource Source)> _shaderSearchPaths = new();
     private readonly Dictionary<string, ShaderInfo> _shadersByName = new();
     private readonly Dictionary<string, ShaderInfo> _shadersByPath = new();
+    private readonly Dictionary<string, List<string>> _duplicateShaders = new(); // name -> list of all paths
     private readonly Dictionary<string, ParsedShader> _lastValidParse = new();
     private readonly List<PathDisplayRule> _pathDisplayRules = new();
     private readonly object _lock = new();
@@ -24,6 +25,11 @@ public class ShaderWorkspace
     private CancellationTokenSource? _backgroundParseCts;
 
     public event EventHandler? IndexingComplete;
+
+    /// <summary>
+    /// Raised when a shader document is updated (for cache invalidation).
+    /// </summary>
+    public event Action<string>? DocumentUpdated;
 
     /// <summary>
     /// Raised when a shader file needs diagnostics published (for background parsing).
@@ -106,6 +112,9 @@ public class ShaderWorkspace
 
         lock (_lock)
         {
+            // Clear duplicate tracking for fresh indexing
+            _duplicateShaders.Clear();
+
             foreach (var (searchPath, source) in _shaderSearchPaths)
             {
                 try
@@ -138,6 +147,36 @@ public class ShaderWorkspace
 
                 lock (_lock)
                 {
+                    // Track all paths for this shader name (for duplicate detection)
+                    if (!_duplicateShaders.TryGetValue(name, out var pathList))
+                    {
+                        pathList = new List<string>();
+                        _duplicateShaders[name] = pathList;
+                    }
+                    pathList.Add(file);
+
+                    // Check for duplicate names and warn
+                    if (_shadersByName.TryGetValue(name, out var existing))
+                    {
+                        // Workspace shaders should take priority over Stride/vvvv shaders
+                        if (source == ShaderSource.Workspace && existing.Source != ShaderSource.Workspace)
+                        {
+                            _logger.LogInformation("Workspace shader '{Name}' overrides {Source} shader at {Path}",
+                                name, existing.Source, existing.FilePath);
+                        }
+                        else if (source == ShaderSource.Workspace && existing.Source == ShaderSource.Workspace)
+                        {
+                            // Two workspace shaders with same name - warn!
+                            _logger.LogWarning("DUPLICATE: Workspace shader '{Name}' exists in multiple locations:\n  - {ExistingPath}\n  - {NewPath}\n  The second one will be used.",
+                                name, existing.FilePath, file);
+                        }
+                        else
+                        {
+                            _logger.LogDebug("Shader '{Name}' from {NewSource} overrides {OldSource} at {Path}",
+                                name, source, existing.Source, existing.FilePath);
+                        }
+                    }
+
                     _shadersByName[name] = info;
                     _shadersByPath[file] = info;
                     _cachedShaderNames = null; // Invalidate cache
@@ -252,6 +291,151 @@ public class ShaderWorkspace
         }
     }
 
+    /// <summary>
+    /// Check if a shader name has duplicates (multiple files with same name).
+    /// </summary>
+    public bool HasDuplicates(string shaderName)
+    {
+        lock (_lock)
+        {
+            return _duplicateShaders.TryGetValue(shaderName, out var paths) && paths.Count > 1;
+        }
+    }
+
+    /// <summary>
+    /// Get all file paths for a shader name (for showing duplicate locations).
+    /// </summary>
+    public IReadOnlyList<string> GetAllPathsForShader(string shaderName)
+    {
+        lock (_lock)
+        {
+            if (_duplicateShaders.TryGetValue(shaderName, out var paths))
+                return paths.ToList();
+            return new List<string>();
+        }
+    }
+
+    /// <summary>
+    /// Get the shader that is "closest" to a given file path.
+    /// Uses longest common path prefix to determine closeness.
+    /// </summary>
+    public ShaderInfo? GetClosestShaderByName(string name, string? contextFilePath)
+    {
+        lock (_lock)
+        {
+            // If no duplicates or no context, return the default
+            if (contextFilePath == null || !_duplicateShaders.TryGetValue(name, out var allPaths) || allPaths.Count <= 1)
+            {
+                return _shadersByName.TryGetValue(name, out var info) ? info : null;
+            }
+
+            // Find the shader with the longest common path prefix
+            var contextDir = Path.GetDirectoryName(contextFilePath) ?? "";
+            ShaderInfo? closest = null;
+            int longestCommonLength = -1;
+
+            foreach (var path in allPaths)
+            {
+                var shaderDir = Path.GetDirectoryName(path) ?? "";
+                var commonLength = GetCommonPathPrefixLength(contextDir, shaderDir);
+
+                if (commonLength > longestCommonLength)
+                {
+                    longestCommonLength = commonLength;
+                    if (_shadersByPath.TryGetValue(path, out var shaderInfo))
+                    {
+                        closest = shaderInfo;
+                    }
+                }
+            }
+
+            // Fall back to default if no match found
+            return closest ?? (_shadersByName.TryGetValue(name, out var defaultInfo) ? defaultInfo : null);
+        }
+    }
+
+    /// <summary>
+    /// Get a parsed shader by name, preferring the one closest to the context file path.
+    /// Use this when resolving base shader references to pick the right one among duplicates.
+    /// </summary>
+    public ParsedShader? GetParsedShaderClosest(string name, string? contextFilePath)
+    {
+        var info = GetClosestShaderByName(name, contextFilePath);
+        if (info == null) return null;
+
+        // Lazy parse - only cache successful full parses, retry partial results
+        if (info.Parsed == null || info.Parsed.IsPartial)
+        {
+            try
+            {
+                var sourceCode = File.ReadAllText(info.FilePath);
+                var newParsed = _parser.TryParse(info.Name, sourceCode);
+
+                // Only update if we got a better result (full parse or first parse)
+                if (newParsed != null && (info.Parsed == null || !newParsed.IsPartial))
+                {
+                    info.Parsed = newParsed;
+
+                    // Cache successful full parse
+                    if (!newParsed.IsPartial)
+                    {
+                        lock (_lock)
+                        {
+                            _lastValidParse[info.Name] = newParsed;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error reading shader file {Path}", info.FilePath);
+            }
+        }
+
+        // If we have a parsed result, return it
+        if (info.Parsed != null)
+            return info.Parsed;
+
+        // Fall back to last valid parse
+        lock (_lock)
+        {
+            if (_lastValidParse.TryGetValue(info.Name, out var cached))
+            {
+                _logger.LogDebug("Using cached parse for {Shader} (current has errors)", info.Name);
+                return cached;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Calculate the length of the common path prefix between two paths.
+    /// </summary>
+    private static int GetCommonPathPrefixLength(string path1, string path2)
+    {
+        // Normalize paths for comparison
+        var p1 = path1.Replace('/', '\\').TrimEnd('\\').ToLowerInvariant();
+        var p2 = path2.Replace('/', '\\').TrimEnd('\\').ToLowerInvariant();
+
+        // Split into segments
+        var segments1 = p1.Split('\\');
+        var segments2 = p2.Split('\\');
+
+        int commonSegments = 0;
+        int minLength = Math.Min(segments1.Length, segments2.Length);
+
+        for (int i = 0; i < minLength; i++)
+        {
+            if (segments1[i] == segments2[i])
+                commonSegments++;
+            else
+                break;
+        }
+
+        return commonSegments;
+    }
+
     public ParsedShader? GetParsedShader(string nameOrPath)
     {
         ShaderInfo? info;
@@ -265,20 +449,26 @@ public class ShaderWorkspace
 
         if (info == null) return null;
 
-        // Lazy parse
-        if (info.Parsed == null)
+        // Lazy parse - only cache successful full parses, retry partial results
+        if (info.Parsed == null || info.Parsed.IsPartial)
         {
             try
             {
                 var sourceCode = File.ReadAllText(info.FilePath);
-                info.Parsed = _parser.TryParse(info.Name, sourceCode);
+                var newParsed = _parser.TryParse(info.Name, sourceCode);
 
-                // Cache successful parse
-                if (info.Parsed != null && !info.Parsed.IsPartial)
+                // Only update if we got a better result (full parse or first parse)
+                if (newParsed != null && (info.Parsed == null || !newParsed.IsPartial))
                 {
-                    lock (_lock)
+                    info.Parsed = newParsed;
+
+                    // Cache successful full parse
+                    if (!newParsed.IsPartial)
                     {
-                        _lastValidParse[info.Name] = info.Parsed;
+                        lock (_lock)
+                        {
+                            _lastValidParse[info.Name] = newParsed;
+                        }
                     }
                 }
             }
@@ -329,6 +519,9 @@ public class ShaderWorkspace
 
             // Update shader info
             info.Parsed = result.Shader;
+
+            // Notify listeners that document was updated (for cache invalidation)
+            DocumentUpdated?.Invoke(name);
 
             // Cache successful non-partial parses
             if (result.Shader != null && !result.IsPartial)

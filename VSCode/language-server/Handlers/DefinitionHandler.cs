@@ -58,8 +58,10 @@ public class DefinitionHandler : DefinitionHandlerBase
 
         _logger.LogInformation("Definition lookup for word: '{Word}'", word);
 
-        // Check if it's a shader name (for base shader navigation)
-        var shaderInfo = _workspace.GetShaderByName(word);
+        var path = uri.GetFileSystemPath();
+
+        // Check if it's a shader name (for base shader navigation) - use context-aware lookup
+        var shaderInfo = _workspace.GetClosestShaderByName(word, path);
         if (shaderInfo != null)
         {
             _logger.LogInformation("Found shader: {ShaderName} at {Path}", word, shaderInfo.FilePath);
@@ -98,14 +100,13 @@ public class DefinitionHandler : DefinitionHandlerBase
         }
 
         // Check for member definitions (variables, methods)
-        var path = uri.GetFileSystemPath();
         var currentShaderName = Path.GetFileNameWithoutExtension(path);
-        var currentParsed = _workspace.GetParsedShader(currentShaderName);
+        var currentParsed = _workspace.GetParsedShaderClosest(currentShaderName, path);
 
         // Check for struct in inheritance chain
         if (currentParsed != null)
         {
-            var structInBaseShader = FindStructInInheritanceChain(currentParsed, word);
+            var structInBaseShader = FindStructInInheritanceChain(currentParsed, word, path);
             if (structInBaseShader.HasValue)
             {
                 _logger.LogInformation("Found struct '{Word}' in base shader at {Path}:{Line}",
@@ -125,11 +126,11 @@ public class DefinitionHandler : DefinitionHandlerBase
 
         if (currentParsed != null)
         {
-            // Check for variable definition
-            var varMatch = _inheritanceResolver.FindVariable(currentParsed, word);
+            // Check for variable definition - use context-aware resolution
+            var varMatch = _inheritanceResolver.FindVariable(currentParsed, word, path);
             if (varMatch.Variable != null && varMatch.DefinedIn != null)
             {
-                var varShaderInfo = _workspace.GetShaderByName(varMatch.DefinedIn);
+                var varShaderInfo = _workspace.GetClosestShaderByName(varMatch.DefinedIn, path);
                 if (varShaderInfo != null)
                 {
                     var location = new Location
@@ -145,13 +146,13 @@ public class DefinitionHandler : DefinitionHandlerBase
                 }
             }
 
-            // Check for method definition
-            var methodMatches = _inheritanceResolver.FindAllMethodsWithName(currentParsed, word).ToList();
+            // Check for method definition - use context-aware resolution
+            var methodMatches = _inheritanceResolver.FindAllMethodsWithName(currentParsed, word, path).ToList();
             if (methodMatches.Count > 0)
             {
                 // Return location to the first (most derived) method
                 var (method, definedIn) = methodMatches[0];
-                var methodShaderInfo = _workspace.GetShaderByName(definedIn);
+                var methodShaderInfo = _workspace.GetClosestShaderByName(definedIn, path);
                 if (methodShaderInfo != null)
                 {
                     var location = new Location
@@ -192,14 +193,14 @@ public class DefinitionHandler : DefinitionHandlerBase
     /// <summary>
     /// Search for a struct in the inheritance chain of the current shader.
     /// </summary>
-    private (string FilePath, int Line)? FindStructInInheritanceChain(ParsedShader currentParsed, string structName)
+    private (string FilePath, int Line)? FindStructInInheritanceChain(ParsedShader currentParsed, string structName, string? contextFilePath)
     {
-        // Get the full inheritance chain
-        var chain = _inheritanceResolver.ResolveInheritanceChain(currentParsed.Name);
+        // Get the full inheritance chain - use context-aware resolution
+        var chain = _inheritanceResolver.ResolveInheritanceChain(currentParsed.Name, contextFilePath);
 
         foreach (var baseShader in chain)
         {
-            var baseInfo = _workspace.GetShaderByName(baseShader.Name);
+            var baseInfo = _workspace.GetClosestShaderByName(baseShader.Name, contextFilePath);
             if (baseInfo == null) continue;
 
             try

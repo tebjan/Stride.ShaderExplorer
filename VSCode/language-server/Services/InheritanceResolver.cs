@@ -23,6 +23,13 @@ public class InheritanceResolver
 
         // Rebuild caches when indexing completes
         _workspace.IndexingComplete += (_, _) => InvalidateCaches();
+
+        // Invalidate caches when any document is updated
+        _workspace.DocumentUpdated += shaderName =>
+        {
+            _logger.LogDebug("Document updated: {ShaderName}, invalidating inheritance caches", shaderName);
+            InvalidateCaches();
+        };
     }
 
     /// <summary>
@@ -93,35 +100,33 @@ public class InheritanceResolver
     /// Returns base shaders in order from immediate parent to root.
     /// Results are cached until the next indexing cycle.
     /// </summary>
-    public List<ParsedShader> ResolveInheritanceChain(string shaderName, HashSet<string>? visited = null)
+    /// <param name="shaderName">Name of the shader to resolve</param>
+    /// <param name="contextFilePath">Optional file path for context-aware resolution of duplicates</param>
+    public List<ParsedShader> ResolveInheritanceChain(string shaderName, string? contextFilePath = null)
     {
-        // For top-level calls, check cache first
-        if (visited == null)
+        // For caching, use a key that includes context path for duplicate scenarios
+        var cacheKey = contextFilePath != null ? $"{shaderName}|{contextFilePath}" : shaderName;
+
+        lock (_cacheLock)
         {
-            lock (_cacheLock)
-            {
-                _chainCache ??= new Dictionary<string, List<ParsedShader>>();
-                if (_chainCache.TryGetValue(shaderName, out var cached))
-                    return cached;
-            }
-
-            // Compute the chain
-            var chain = ResolveInheritanceChainInternal(shaderName, new HashSet<string>());
-
-            // Cache it (re-check _chainCache in case it was invalidated during computation)
-            lock (_cacheLock)
-            {
-                _chainCache ??= new Dictionary<string, List<ParsedShader>>();
-                _chainCache[shaderName] = chain;
-            }
-            return chain;
+            _chainCache ??= new Dictionary<string, List<ParsedShader>>();
+            if (_chainCache.TryGetValue(cacheKey, out var cached))
+                return cached;
         }
 
-        // Recursive call with existing visited set - don't use cache
-        return ResolveInheritanceChainInternal(shaderName, visited);
+        // Compute the chain
+        var chain = ResolveInheritanceChainInternal(shaderName, new HashSet<string>(), contextFilePath);
+
+        // Cache it (re-check _chainCache in case it was invalidated during computation)
+        lock (_cacheLock)
+        {
+            _chainCache ??= new Dictionary<string, List<ParsedShader>>();
+            _chainCache[cacheKey] = chain;
+        }
+        return chain;
     }
 
-    private List<ParsedShader> ResolveInheritanceChainInternal(string shaderName, HashSet<string> visited)
+    private List<ParsedShader> ResolveInheritanceChainInternal(string shaderName, HashSet<string> visited, string? contextFilePath)
     {
         if (visited.Contains(shaderName))
         {
@@ -131,36 +136,54 @@ public class InheritanceResolver
         visited.Add(shaderName);
 
         var result = new List<ParsedShader>();
-        var parsed = _workspace.GetParsedShader(shaderName);
 
-        if (parsed?.BaseShaderReferences == null || parsed.BaseShaderReferences.Count == 0)
+        // Use context-aware shader resolution to pick the closest shader among duplicates
+        var parsed = _workspace.GetParsedShaderClosest(shaderName, contextFilePath);
+
+        if (parsed == null)
+        {
+            _logger.LogWarning("Could not get parsed shader for {ShaderName}", shaderName);
             return result;
+        }
 
-        _logger.LogDebug("Resolving inheritance for {ShaderName}, base shaders: {BaseShaders}",
-            shaderName, string.Join(", ", parsed.BaseShaderNames));
+        // Update context path to the current shader's path for subsequent lookups
+        var shaderInfo = _workspace.GetClosestShaderByName(shaderName, contextFilePath);
+        var currentFilePath = shaderInfo?.FilePath ?? contextFilePath;
+
+        if (parsed.BaseShaderReferences == null || parsed.BaseShaderReferences.Count == 0)
+        {
+            _logger.LogDebug("Shader {ShaderName} has no base shaders (IsPartial={IsPartial})",
+                shaderName, parsed.IsPartial);
+            return result;
+        }
+
+        _logger.LogDebug("Resolving inheritance for {ShaderName}, base shaders: [{BaseShaders}] (IsPartial={IsPartial})",
+            shaderName, string.Join(", ", parsed.BaseShaderNames), parsed.IsPartial);
 
         foreach (var baseRef in parsed.BaseShaderReferences)
         {
             // Use BaseName (stripped of template arguments) for lookup
             // e.g., "ColorModulator<1.0f>" -> lookup "ColorModulator"
             var lookupName = baseRef.BaseName;
-            var baseParsed = _workspace.GetParsedShader(lookupName);
+
+            // Use context-aware resolution for base shaders too (closest to current shader)
+            var baseParsed = _workspace.GetParsedShaderClosest(lookupName, currentFilePath);
 
             if (baseParsed != null)
             {
-                _logger.LogDebug("Found base shader {BaseName} (from {FullName}) with {VarCount} variables, {MethodCount} methods{TemplateInfo}",
+                _logger.LogDebug("  -> Found base {BaseName}: {VarCount} vars, {MethodCount} methods, bases=[{BaseBases}]{TemplateInfo}",
                     lookupName,
-                    baseRef.FullName,
                     baseParsed.Variables.Count,
                     baseParsed.Methods.Count,
+                    string.Join(", ", baseParsed.BaseShaderNames),
                     baseRef.HasTemplateArguments ? $", template args: [{string.Join(", ", baseRef.TemplateArguments)}]" : "");
                 result.Add(baseParsed);
-                // Recursively add base shader's bases
-                result.AddRange(ResolveInheritanceChainInternal(lookupName, visited));
+                // Recursively add base shader's bases (using current file path as context)
+                result.AddRange(ResolveInheritanceChainInternal(lookupName, visited, currentFilePath));
             }
             else
             {
-                _logger.LogWarning("Base shader {BaseName} NOT FOUND for {ShaderName} (full ref: {FullName})",
+                _logger.LogWarning("  -> Base shader {BaseName} NOT FOUND for {ShaderName} (full ref: {FullName})",
                     lookupName, shaderName, baseRef.FullName);
             }
         }
@@ -173,14 +196,16 @@ public class InheritanceResolver
     /// Returns tuples of (Variable, ShaderName where it's defined).
     /// Local variables come first, then inherited ones in inheritance order.
     /// </summary>
-    public IEnumerable<(ShaderVariable Variable, string DefinedIn)> GetAllVariables(ParsedShader shader)
+    /// <param name="shader">The shader to get variables for</param>
+    /// <param name="contextFilePath">Optional file path for context-aware resolution of duplicate shaders</param>
+    public IEnumerable<(ShaderVariable Variable, string DefinedIn)> GetAllVariables(ParsedShader shader, string? contextFilePath = null)
     {
         // Local variables first
         foreach (var v in shader.Variables)
             yield return (v, shader.Name);
 
         // Then inherited variables
-        foreach (var baseShader in ResolveInheritanceChain(shader.Name))
+        foreach (var baseShader in ResolveInheritanceChain(shader.Name, contextFilePath))
         {
             foreach (var v in baseShader.Variables)
                 yield return (v, baseShader.Name);
@@ -192,14 +217,16 @@ public class InheritanceResolver
     /// Returns tuples of (Method, ShaderName where it's defined).
     /// Local methods come first, then inherited ones in inheritance order.
     /// </summary>
-    public IEnumerable<(ShaderMethod Method, string DefinedIn)> GetAllMethods(ParsedShader shader)
+    /// <param name="shader">The shader to get methods for</param>
+    /// <param name="contextFilePath">Optional file path for context-aware resolution of duplicate shaders</param>
+    public IEnumerable<(ShaderMethod Method, string DefinedIn)> GetAllMethods(ParsedShader shader, string? contextFilePath = null)
     {
         // Local methods first
         foreach (var m in shader.Methods)
             yield return (m, shader.Name);
 
         // Then inherited methods
-        foreach (var baseShader in ResolveInheritanceChain(shader.Name))
+        foreach (var baseShader in ResolveInheritanceChain(shader.Name, contextFilePath))
         {
             foreach (var m in baseShader.Methods)
                 yield return (m, baseShader.Name);
@@ -209,12 +236,14 @@ public class InheritanceResolver
     /// <summary>
     /// Gets all compositions including inherited ones.
     /// </summary>
-    public IEnumerable<(ShaderComposition Composition, string DefinedIn)> GetAllCompositions(ParsedShader shader)
+    /// <param name="shader">The shader to get compositions for</param>
+    /// <param name="contextFilePath">Optional file path for context-aware resolution of duplicate shaders</param>
+    public IEnumerable<(ShaderComposition Composition, string DefinedIn)> GetAllCompositions(ParsedShader shader, string? contextFilePath = null)
     {
         foreach (var c in shader.Compositions)
             yield return (c, shader.Name);
 
-        foreach (var baseShader in ResolveInheritanceChain(shader.Name))
+        foreach (var baseShader in ResolveInheritanceChain(shader.Name, contextFilePath))
         {
             foreach (var c in baseShader.Compositions)
                 yield return (c, baseShader.Name);
@@ -224,35 +253,47 @@ public class InheritanceResolver
     /// <summary>
     /// Finds a variable by name, searching local then inherited.
     /// </summary>
-    public (ShaderVariable? Variable, string? DefinedIn) FindVariable(ParsedShader shader, string name)
+    /// <param name="shader">The shader to search in</param>
+    /// <param name="name">Variable name to find</param>
+    /// <param name="contextFilePath">Optional file path for context-aware resolution of duplicate shaders</param>
+    public (ShaderVariable? Variable, string? DefinedIn) FindVariable(ParsedShader shader, string name, string? contextFilePath = null)
     {
-        return GetAllVariables(shader).FirstOrDefault(x => x.Variable.Name == name);
+        return GetAllVariables(shader, contextFilePath).FirstOrDefault(x => x.Variable.Name == name);
     }
 
     /// <summary>
     /// Finds a method by name, searching local then inherited.
     /// Returns the first match (local takes precedence).
     /// </summary>
-    public (ShaderMethod? Method, string? DefinedIn) FindMethod(ParsedShader shader, string name)
+    /// <param name="shader">The shader to search in</param>
+    /// <param name="name">Method name to find</param>
+    /// <param name="contextFilePath">Optional file path for context-aware resolution of duplicate shaders</param>
+    public (ShaderMethod? Method, string? DefinedIn) FindMethod(ParsedShader shader, string name, string? contextFilePath = null)
     {
-        return GetAllMethods(shader).FirstOrDefault(x => x.Method.Name == name);
+        return GetAllMethods(shader, contextFilePath).FirstOrDefault(x => x.Method.Name == name);
     }
 
     /// <summary>
     /// Finds ALL methods with a given name across the inheritance chain.
     /// Useful for showing all overrides/implementations of a method.
     /// </summary>
-    public IEnumerable<(ShaderMethod Method, string DefinedIn)> FindAllMethodsWithName(ParsedShader shader, string name)
+    /// <param name="shader">The shader to search in</param>
+    /// <param name="name">Method name to find</param>
+    /// <param name="contextFilePath">Optional file path for context-aware resolution of duplicate shaders</param>
+    public IEnumerable<(ShaderMethod Method, string DefinedIn)> FindAllMethodsWithName(ParsedShader shader, string name, string? contextFilePath = null)
     {
-        return GetAllMethods(shader).Where(x => x.Method.Name == name);
+        return GetAllMethods(shader, contextFilePath).Where(x => x.Method.Name == name);
     }
 
     /// <summary>
     /// Finds ALL variables with a given name across the inheritance chain.
     /// </summary>
-    public IEnumerable<(ShaderVariable Variable, string DefinedIn)> FindAllVariablesWithName(ParsedShader shader, string name)
+    /// <param name="shader">The shader to search in</param>
+    /// <param name="name">Variable name to find</param>
+    /// <param name="contextFilePath">Optional file path for context-aware resolution of duplicate shaders</param>
+    public IEnumerable<(ShaderVariable Variable, string DefinedIn)> FindAllVariablesWithName(ParsedShader shader, string name, string? contextFilePath = null)
     {
-        return GetAllVariables(shader).Where(x => x.Variable.Name == name);
+        return GetAllVariables(shader, contextFilePath).Where(x => x.Variable.Name == name);
     }
 
     /// <summary>

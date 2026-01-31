@@ -101,14 +101,17 @@ public class SemanticValidator
                 ValidateFilenameMatchesShaderName(parsed, sourceCode, filePath, diagnostics);
             }
 
-            // Validate base shader references
-            ValidateBaseShaders(parsed, sourceCode, diagnostics);
+            // Check if this shader itself has duplicates
+            ValidateDuplicateShaders(parsed, sourceCode, filePath, diagnostics);
 
-            // Validate override methods have base implementations
-            ValidateOverrideMethods(parsed, sourceCode, diagnostics);
+            // Validate base shader references - pass file path for context-aware resolution
+            ValidateBaseShaders(parsed, sourceCode, filePath, diagnostics);
 
-            // Build the scope of known identifiers
-            var scope = BuildScope(parsed);
+            // Validate override methods have base implementations - pass file path for context-aware resolution
+            ValidateOverrideMethods(parsed, sourceCode, filePath, diagnostics);
+
+            // Build the scope of known identifiers - pass file path for context-aware resolution
+            var scope = BuildScope(parsed, filePath);
 
             // Walk the AST to find identifier references
             ValidateClass(parsed.ShaderClass, scope, sourceCode, diagnostics);
@@ -119,6 +122,48 @@ public class SemanticValidator
         }
 
         return diagnostics;
+    }
+
+    /// <summary>
+    /// Check if this shader has duplicates (multiple files with the same shader name).
+    /// </summary>
+    private void ValidateDuplicateShaders(ParsedShader parsed, string sourceCode, string? filePath, List<Diagnostic> diagnostics)
+    {
+        if (string.IsNullOrEmpty(filePath))
+            return;
+
+        var shaderName = parsed.Name;
+        if (!_workspace.HasDuplicates(shaderName))
+            return;
+
+        var allPaths = _workspace.GetAllPathsForShader(shaderName);
+        var otherPaths = allPaths.Where(p => !string.Equals(p, filePath, StringComparison.OrdinalIgnoreCase)).ToList();
+
+        if (otherPaths.Count == 0)
+            return;
+
+        // Find the shader name position
+        var position = FindShaderNamePosition(sourceCode, shaderName);
+        if (!position.HasValue)
+            return;
+
+        // Build message with other locations
+        var otherLocationsDisplay = otherPaths.Select(p => _workspace.GetDisplayPath(p)).ToList();
+        var message = $"Shader '{shaderName}' exists in multiple locations. Also found at: {string.Join(", ", otherLocationsDisplay)}";
+
+        diagnostics.Add(new Diagnostic
+        {
+            Range = new Range(
+                position.Value.line,
+                position.Value.col,
+                position.Value.line,
+                position.Value.col + shaderName.Length
+            ),
+            Severity = DiagnosticSeverity.Warning,
+            Source = "sdsl",
+            Message = message,
+            Code = "duplicate-shader-name"
+        });
     }
 
     /// <summary>
@@ -200,14 +245,14 @@ public class SemanticValidator
     /// <summary>
     /// Validate that all base shaders exist and check for redundant inheritance.
     /// </summary>
-    private void ValidateBaseShaders(ParsedShader parsed, string sourceCode, List<Diagnostic> diagnostics)
+    private void ValidateBaseShaders(ParsedShader parsed, string sourceCode, string? filePath, List<Diagnostic> diagnostics)
     {
         // First pass: check that all base shaders exist
         // Use BaseShaderReferences to properly handle template arguments
         foreach (var baseRef in parsed.BaseShaderReferences)
         {
-            // Use BaseName (stripped of template arguments) for lookup
-            var baseShader = _workspace.GetShaderByName(baseRef.BaseName);
+            // Use context-aware lookup to find the closest shader among duplicates
+            var baseShader = _workspace.GetClosestShaderByName(baseRef.BaseName, filePath);
             if (baseShader == null)
             {
                 // Try to find the position in source code using the full name
@@ -228,18 +273,44 @@ public class SemanticValidator
                     });
                 }
             }
+            else
+            {
+                // Check if base shader has duplicates - show info about which one is used
+                if (_workspace.HasDuplicates(baseRef.BaseName))
+                {
+                    var position = FindBaseShaderPosition(sourceCode, baseRef.BaseName);
+                    if (position.HasValue)
+                    {
+                        var allPaths = _workspace.GetAllPathsForShader(baseRef.BaseName);
+                        var usedPath = _workspace.GetDisplayPath(baseShader.FilePath);
+                        diagnostics.Add(new Diagnostic
+                        {
+                            Range = new Range(
+                                position.Value.line,
+                                position.Value.col,
+                                position.Value.line,
+                                position.Value.col + baseRef.BaseName.Length
+                            ),
+                            Severity = DiagnosticSeverity.Information,
+                            Source = "sdsl",
+                            Message = $"Base shader '{baseRef.BaseName}' exists in {allPaths.Count} locations. Using closest: {usedPath}",
+                            Code = "ambiguous-base-shader"
+                        });
+                    }
+                }
+            }
         }
 
         // Second pass: check for redundant base shaders
         // A base shader is redundant if another direct base already inherits from it
-        CheckRedundantBaseShaders(parsed, sourceCode, diagnostics);
+        CheckRedundantBaseShaders(parsed, sourceCode, filePath, diagnostics);
     }
 
     /// <summary>
     /// Check for redundant base shaders that are already transitively inherited via another base.
     /// Example: if shader inherits from A, B and B inherits from A, then A is redundant.
     /// </summary>
-    private void CheckRedundantBaseShaders(ParsedShader parsed, string sourceCode, List<Diagnostic> diagnostics)
+    private void CheckRedundantBaseShaders(ParsedShader parsed, string sourceCode, string? filePath, List<Diagnostic> diagnostics)
     {
         var baseNames = parsed.BaseShaderNames;
         if (baseNames.Count < 2)
@@ -250,7 +321,8 @@ public class SemanticValidator
 
         foreach (var baseName in baseNames)
         {
-            var chain = _inheritanceResolver.ResolveInheritanceChain(baseName);
+            // Use context-aware resolution for inheritance chain
+            var chain = _inheritanceResolver.ResolveInheritanceChain(baseName, filePath);
             transitiveInheritance[baseName] = new HashSet<string>(
                 chain.Select(s => s.Name),
                 StringComparer.OrdinalIgnoreCase
@@ -334,16 +406,16 @@ public class SemanticValidator
     /// <summary>
     /// Validate that override methods have a corresponding method in a base shader.
     /// </summary>
-    private void ValidateOverrideMethods(ParsedShader parsed, string sourceCode, List<Diagnostic> diagnostics)
+    private void ValidateOverrideMethods(ParsedShader parsed, string sourceCode, string? filePath, List<Diagnostic> diagnostics)
     {
         foreach (var method in parsed.Methods)
         {
             if (!method.IsOverride)
                 continue;
 
-            // Check if any base shader defines this method
+            // Check if any base shader defines this method - use context-aware resolution
             var baseMethodFound = false;
-            var inheritanceChain = _inheritanceResolver.ResolveInheritanceChain(parsed.Name);
+            var inheritanceChain = _inheritanceResolver.ResolveInheritanceChain(parsed.Name, filePath);
 
             foreach (var baseShader in inheritanceChain)
             {
@@ -436,7 +508,7 @@ public class SemanticValidator
         return null;
     }
 
-    private ShaderScope BuildScope(ParsedShader parsed)
+    private ShaderScope BuildScope(ParsedShader parsed, string? filePath = null)
     {
         var scope = new ShaderScope();
 
@@ -473,13 +545,13 @@ public class SemanticValidator
             scope.AddVariable(composition.Name, composition.TypeName);
         }
 
-        // Add inherited members with their types
-        foreach (var (variable, _) in _inheritanceResolver.GetAllVariables(parsed))
+        // Add inherited members with their types - use context-aware resolution
+        foreach (var (variable, _) in _inheritanceResolver.GetAllVariables(parsed, filePath))
         {
             scope.AddVariable(variable.Name, variable.TypeName);
         }
 
-        foreach (var (method, _) in _inheritanceResolver.GetAllMethods(parsed))
+        foreach (var (method, _) in _inheritanceResolver.GetAllMethods(parsed, filePath))
         {
             scope.Functions.Add(method.Name);
         }

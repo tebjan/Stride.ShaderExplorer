@@ -49,7 +49,7 @@ public class SignatureHelpHandler : SignatureHelpHandlerBase
 
         var path = uri.GetFileSystemPath();
         var currentShaderName = Path.GetFileNameWithoutExtension(path);
-        var currentParsed = _workspace.GetParsedShader(currentShaderName);
+        var currentParsed = _workspace.GetParsedShaderClosest(currentShaderName, path);
 
         // Collect signatures from various sources
         var signatures = new List<SignatureInformation>();
@@ -61,7 +61,7 @@ public class SignatureHelpHandler : SignatureHelpHandlerBase
         // 2. Check methods from current shader and inheritance chain
         if (currentParsed != null)
         {
-            var shaderSignatures = GetShaderMethodSignatures(currentParsed, methodName);
+            var shaderSignatures = GetShaderMethodSignatures(currentParsed, methodName, path);
             signatures.AddRange(shaderSignatures);
         }
 
@@ -294,12 +294,12 @@ public class SignatureHelpHandler : SignatureHelpHandlerBase
     /// <summary>
     /// Get signatures for methods defined in the shader hierarchy.
     /// </summary>
-    private List<SignatureInformation> GetShaderMethodSignatures(ParsedShader shader, string methodName)
+    private List<SignatureInformation> GetShaderMethodSignatures(ParsedShader shader, string methodName, string? contextFilePath)
     {
         var signatures = new List<SignatureInformation>();
         var seenSignatures = new HashSet<string>();
 
-        foreach (var (method, definedIn) in _inheritanceResolver.GetAllMethods(shader))
+        foreach (var (method, definedIn) in _inheritanceResolver.GetAllMethods(shader, contextFilePath))
         {
             if (!method.Name.Equals(methodName, StringComparison.OrdinalIgnoreCase))
                 continue;

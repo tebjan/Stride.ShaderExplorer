@@ -83,7 +83,7 @@ public class HoverHandler : HoverHandlerBase
         // If we have a member context (something.word), check for swizzle or member access
         if (!string.IsNullOrEmpty(memberContext))
         {
-            var memberHover = GetMemberAccessHover(memberContext, word, content, position, currentParsed, currentShaderName);
+            var memberHover = GetMemberAccessHover(memberContext, word, content, position, currentParsed, currentShaderName, path);
             if (memberHover != null)
                 return Task.FromResult<Hover?>(memberHover);
         }
@@ -103,17 +103,17 @@ public class HoverHandler : HoverHandlerBase
             });
         }
 
-        // Check if it's a shader name
-        var shaderInfo = _workspace.GetShaderByName(word);
+        // Check if it's a shader name - use closest match if there are duplicates
+        var shaderInfo = _workspace.GetClosestShaderByName(word, path);
         _logger.LogInformation("Shader lookup for '{Word}': {Found}", word, shaderInfo != null ? "FOUND" : "NOT FOUND");
 
         if (shaderInfo != null)
         {
-            var parsed = _workspace.GetParsedShader(word);
+            var parsed = _workspace.GetParsedShaderClosest(word, path);
             var markdown = BuildShaderHoverContent(word, parsed, shaderInfo.DisplayPath, shaderInfo.FilePath);
 
             // Check if this is a redundant base shader (add remove action only, diagnostic shows the warning)
-            if (currentParsed != null && IsRedundantBaseShader(currentParsed, word, out var inheritedVia))
+            if (currentParsed != null && IsRedundantBaseShader(currentParsed, word, path, out var inheritedVia))
             {
                 markdown += $"\n\nRemove: {word}";
             }
@@ -164,8 +164,8 @@ public class HoverHandler : HoverHandlerBase
                 });
             }
 
-            // Check variables (local and inherited)
-            var variableMatch = _inheritanceResolver.FindVariable(currentParsed, word);
+            // Check variables (local and inherited) - use context path for duplicate resolution
+            var variableMatch = _inheritanceResolver.FindVariable(currentParsed, word, path);
             _logger.LogInformation("Variable lookup for '{Word}': {Found}", word, variableMatch.Variable != null ? $"FOUND in {variableMatch.DefinedIn}" : "NOT FOUND");
 
             if (variableMatch.Variable != null)
@@ -183,8 +183,8 @@ public class HoverHandler : HoverHandlerBase
             }
 
             // Check methods (local and inherited)
-            // Get ALL methods with this name to show full override chain
-            var allMethods = _inheritanceResolver.FindAllMethodsWithName(currentParsed, word).ToList();
+            // Get ALL methods with this name to show full override chain - use context path
+            var allMethods = _inheritanceResolver.FindAllMethodsWithName(currentParsed, word, path).ToList();
             if (allMethods.Count > 0)
             {
                 var markdown = BuildMethodsHoverContent(allMethods, currentShaderName);
@@ -309,7 +309,7 @@ public class HoverHandler : HoverHandlerBase
     /// Check if a shader is a redundant base shader in the current shader's inheritance list.
     /// Returns true if another base shader already transitively inherits from this one.
     /// </summary>
-    private bool IsRedundantBaseShader(ParsedShader currentShader, string baseShaderName, out string? inheritedVia)
+    private bool IsRedundantBaseShader(ParsedShader currentShader, string baseShaderName, string? contextFilePath, out string? inheritedVia)
     {
         inheritedVia = null;
         var baseNames = currentShader.BaseShaderNames;
@@ -324,7 +324,7 @@ public class HoverHandler : HoverHandlerBase
             if (string.Equals(otherBase, baseShaderName, StringComparison.OrdinalIgnoreCase))
                 continue;
 
-            var chain = _inheritanceResolver.ResolveInheritanceChain(otherBase);
+            var chain = _inheritanceResolver.ResolveInheritanceChain(otherBase, contextFilePath);
             if (chain.Any(s => string.Equals(s.Name, baseShaderName, StringComparison.OrdinalIgnoreCase)))
             {
                 inheritedVia = otherBase;
@@ -338,7 +338,7 @@ public class HoverHandler : HoverHandlerBase
     /// <summary>
     /// Handle hover on member access (something.member) including swizzles.
     /// </summary>
-    private Hover? GetMemberAccessHover(string target, string member, string content, Position position, ParsedShader? currentParsed, string currentShaderName)
+    private Hover? GetMemberAccessHover(string target, string member, string content, Position position, ParsedShader? currentParsed, string currentShaderName, string? contextFilePath)
     {
         _logger.LogDebug("GetMemberAccessHover: target={Target}, member={Member}", target, member);
 
@@ -348,8 +348,8 @@ public class HoverHandler : HoverHandlerBase
         // Handle base.Method() - show the base shader's method, not the current override
         if (string.Equals(target, "base", StringComparison.OrdinalIgnoreCase) && currentParsed != null)
         {
-            // Find the method in base shaders only (exclude the current shader)
-            var allMethods = _inheritanceResolver.FindAllMethodsWithName(currentParsed, member)
+            // Find the method in base shaders only (exclude the current shader) - use context path
+            var allMethods = _inheritanceResolver.FindAllMethodsWithName(currentParsed, member, contextFilePath)
                 .Where(m => !string.Equals(m.DefinedIn, currentShaderName, StringComparison.OrdinalIgnoreCase))
                 .ToList();
 
@@ -382,10 +382,10 @@ public class HoverHandler : HoverHandlerBase
         // Check if target is a known stream type
         if (HlslTypeSystem.IsStreamType(target))
         {
-            // For streams.X, look up the stream member in inherited shaders
+            // For streams.X, look up the stream member in inherited shaders - use context path
             if (currentParsed != null)
             {
-                var streamVar = _inheritanceResolver.FindVariable(currentParsed, member);
+                var streamVar = _inheritanceResolver.FindVariable(currentParsed, member, contextFilePath);
                 if (streamVar.Variable != null && streamVar.Variable.IsStream)
                 {
                     var isLocal = streamVar.DefinedIn == currentShaderName;
@@ -411,10 +411,10 @@ public class HoverHandler : HoverHandlerBase
             _logger.LogDebug("Found local var {Target} with type {Type}", target, targetType);
         }
 
-        // Check if target is a shader member variable
+        // Check if target is a shader member variable - use context path
         if (targetType == null && currentParsed != null)
         {
-            var varMatch = _inheritanceResolver.FindVariable(currentParsed, target);
+            var varMatch = _inheritanceResolver.FindVariable(currentParsed, target, contextFilePath);
             if (varMatch.Variable != null)
             {
                 targetType = varMatch.Variable.TypeName;
@@ -589,7 +589,7 @@ public class HoverHandler : HoverHandlerBase
         return false;
     }
 
-    private static string BuildShaderHoverContent(string name, ParsedShader? parsed, string displayPath, string fullFilePath)
+    private string BuildShaderHoverContent(string name, ParsedShader? parsed, string displayPath, string fullFilePath)
     {
         var sb = new System.Text.StringBuilder();
 
@@ -641,8 +641,24 @@ public class HoverHandler : HoverHandlerBase
         }
 
         sb.AppendLine();
-        // Clickable file path - will be transformed by extension to a command link
-        sb.AppendLine($"OpenFile: {displayPath}|{fullFilePath}|1");
+
+        // Check for duplicates and show all locations
+        var allPaths = _workspace.GetAllPathsForShader(name);
+        if (allPaths.Count > 1)
+        {
+            sb.AppendLine("⚠️ **Multiple locations:**");
+            foreach (var path in allPaths)
+            {
+                var pathDisplayPath = _workspace.GetDisplayPath(path);
+                var marker = path.Equals(fullFilePath, StringComparison.OrdinalIgnoreCase) ? " ← *using this one*" : "";
+                sb.AppendLine($"- OpenFile: {pathDisplayPath}|{path}|1{marker}");
+            }
+        }
+        else
+        {
+            // Clickable file path - will be transformed by extension to a command link
+            sb.AppendLine($"OpenFile: {displayPath}|{fullFilePath}|1");
+        }
 
         return sb.ToString();
     }

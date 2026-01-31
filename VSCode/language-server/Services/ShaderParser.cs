@@ -60,10 +60,10 @@ public class ShaderParser
         @"(float[234]?|int[234]?|uint[234]?|bool|Texture[123]D|TextureCube|SamplerState|Semantic|LinkType)\s+(\w+)",
         RegexOptions.Compiled);
     private static readonly Regex VariableDeclRegex = new(
-        @"(?:stage\s+|stream\s+|compose\s+)*(\w+(?:<[^>]+>)?)\s+(\w+)\s*[;=]",
+        @"(?:static\s+|const\s+|stage\s+|stream\s+|compose\s+)*(\w+(?:<[^>]+>)?)\s+(\w+)\s*[;=]",
         RegexOptions.Compiled);
     private static readonly Regex MethodDeclRegex = new(
-        @"(?:override\s+|abstract\s+|stage\s+)*(\w+(?:<[^>]+>)?)\s+(\w+)\s*\([^)]*\)",
+        @"(?:static\s+|override\s+|abstract\s+|stage\s+)*(\w+(?:<[^>]+>)?)\s+(\w+)\s*\([^)]*\)",
         RegexOptions.Compiled);
 
     private static readonly ShaderMacro[] Macros = new[]
@@ -108,6 +108,17 @@ public class ShaderParser
             var shaderClass = parsingResult.Shader?.GetFirstClassDecl();
             if (shaderClass != null)
             {
+                // Log member types for debugging
+                var memberTypes = shaderClass.Members
+                    .GroupBy(m => m.GetType().Name)
+                    .Select(g => $"{g.Key}:{g.Count()}")
+                    .ToList();
+                _logger.LogDebug("Shader {ShaderName} has members: {MemberTypes}", shaderName, string.Join(", ", memberTypes));
+
+                // Log variable names specifically
+                var varNames = shaderClass.Members.OfType<Variable>().Select(v => v.Name?.Text).ToList();
+                _logger.LogDebug("Shader {ShaderName} variables: [{Variables}]", shaderName, string.Join(", ", varNames));
+
                 // Extract template parameters from source code using regex
                 // (AST-based extraction via reflection is unreliable)
                 var templateParams = ExtractTemplateParametersFromSource(sourceCode);
