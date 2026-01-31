@@ -12,7 +12,7 @@ public class ShaderWorkspace
     private readonly HashSet<string> _workspaceFolders = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<(string Path, ShaderSource Source)> _shaderSearchPaths = new();
     private readonly Dictionary<string, ShaderInfo> _shadersByName = new();
-    private readonly Dictionary<string, ShaderInfo> _shadersByPath = new();
+    private readonly Dictionary<string, ShaderInfo> _shadersByPath = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, List<string>> _duplicateShaders = new(); // name -> list of all paths
     private readonly Dictionary<string, ParsedShader> _lastValidParse = new();
     private readonly List<PathDisplayRule> _pathDisplayRules = new();
@@ -291,6 +291,299 @@ public class ShaderWorkspace
         }
     }
 
+    #region File System Events
+
+    /// <summary>
+    /// Handle a file being deleted - remove the shader from workspace.
+    /// </summary>
+    public void HandleFileDeleted(string filePath)
+    {
+        lock (_lock)
+        {
+            if (!_shadersByPath.TryGetValue(filePath, out var info))
+                return;
+
+            _logger.LogInformation("Removing shader due to file deletion: {Name} at {Path}", info.Name, filePath);
+
+            // Remove from path index
+            _shadersByPath.Remove(filePath);
+
+            // Remove from name index (only if this is the primary entry)
+            if (_shadersByName.TryGetValue(info.Name, out var nameEntry) &&
+                string.Equals(nameEntry.FilePath, filePath, StringComparison.OrdinalIgnoreCase))
+            {
+                _shadersByName.Remove(info.Name);
+
+                // Check if there's a duplicate that should become the new primary
+                if (_duplicateShaders.TryGetValue(info.Name, out var duplicates))
+                {
+                    duplicates.Remove(filePath);
+                    if (duplicates.Count > 0)
+                    {
+                        // Promote first duplicate to primary
+                        var newPrimaryPath = duplicates.First();
+                        if (_shadersByPath.TryGetValue(newPrimaryPath, out var newPrimary))
+                        {
+                            _shadersByName[info.Name] = newPrimary;
+                        }
+                    }
+                    if (duplicates.Count <= 1)
+                    {
+                        _duplicateShaders.Remove(info.Name);
+                    }
+                }
+            }
+            else if (_duplicateShaders.TryGetValue(info.Name, out var duplicates))
+            {
+                // Just remove from duplicates list
+                duplicates.Remove(filePath);
+                if (duplicates.Count <= 1)
+                {
+                    _duplicateShaders.Remove(info.Name);
+                }
+            }
+
+            // Remove from last valid parse cache
+            _lastValidParse.Remove(info.Name);
+
+            // Invalidate cached names
+            _cachedShaderNames = null;
+        }
+    }
+
+    /// <summary>
+    /// Handle a file being created - add the shader to workspace.
+    /// </summary>
+    public void HandleFileCreated(string filePath)
+    {
+        if (!filePath.EndsWith(".sdsl", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        // Determine the source based on the path
+        var source = DetermineShaderSource(filePath);
+
+        lock (_lock)
+        {
+            // Already tracked?
+            if (_shadersByPath.ContainsKey(filePath))
+                return;
+
+            var name = Path.GetFileNameWithoutExtension(filePath);
+            var displayPath = GetDisplayPath(filePath);
+
+            _logger.LogInformation("Adding shader due to file creation: {Name} at {Path}", name, filePath);
+
+            var info = new ShaderInfo(name, filePath, displayPath, source);
+            _shadersByPath[filePath] = info;
+
+            // Handle name collision
+            if (_shadersByName.TryGetValue(name, out var existing))
+            {
+                // Track as duplicate
+                if (!_duplicateShaders.ContainsKey(name))
+                {
+                    _duplicateShaders[name] = new List<string> { existing.FilePath };
+                }
+                _duplicateShaders[name].Add(filePath);
+            }
+            else
+            {
+                _shadersByName[name] = info;
+            }
+
+            // Invalidate cached names
+            _cachedShaderNames = null;
+        }
+
+        // Request diagnostics for the new file
+        RequestDiagnosticsPublish?.Invoke(filePath);
+    }
+
+    /// <summary>
+    /// Handle a file being renamed - update shader paths.
+    /// </summary>
+    public void HandleFileRenamed(string oldPath, string newPath)
+    {
+        _logger.LogInformation("Handling file rename: {OldPath} -> {NewPath}", oldPath, newPath);
+
+        // Remove old entry
+        HandleFileDeleted(oldPath);
+
+        // Add new entry
+        HandleFileCreated(newPath);
+    }
+
+    /// <summary>
+    /// Determine the shader source based on the file path.
+    /// </summary>
+    private ShaderSource DetermineShaderSource(string filePath)
+    {
+        var normalizedPath = filePath.Replace('/', '\\').ToLowerInvariant();
+
+        // Check if it's in a workspace folder
+        var workspaceFolders = GetWorkspaceFolders();
+        foreach (var folder in workspaceFolders)
+        {
+            var normalizedFolder = folder.Replace('/', '\\').ToLowerInvariant();
+            if (normalizedPath.StartsWith(normalizedFolder))
+            {
+                return ShaderSource.Workspace;
+            }
+        }
+
+        // Check if it's in vvvv
+        if (normalizedPath.Contains("vvvv_gamma"))
+        {
+            return ShaderSource.Vvvv;
+        }
+
+        // Default to Stride (NuGet packages)
+        return ShaderSource.Stride;
+    }
+
+    /// <summary>
+    /// Get workspace folders (currently tracked via the shader paths).
+    /// </summary>
+    private IEnumerable<string> GetWorkspaceFolders()
+    {
+        lock (_lock)
+        {
+            return _shadersByPath.Values
+                .Where(s => s.Source == ShaderSource.Workspace)
+                .Select(s => Path.GetDirectoryName(s.FilePath))
+                .Where(d => d != null)
+                .Distinct()
+                .Cast<string>()
+                .ToList();
+        }
+    }
+
+    #endregion
+
+    #region Struct Registry
+
+    /// <summary>
+    /// Get a struct definition by name, searching through all parsed shaders.
+    /// Uses context-aware resolution to prefer structs defined in shaders closer to the context file.
+    /// </summary>
+    public ShaderStruct? GetStruct(string structName, string? contextFilePath = null)
+    {
+        if (string.IsNullOrEmpty(structName))
+            return null;
+
+        // First check built-in HLSL types - we don't have struct definitions for these
+        if (HlslTypeSystem.GetTypeInfo(structName) != null)
+            return null;
+
+        // Get all shaders and their structs
+        var candidates = new List<(ShaderStruct Struct, string ShaderPath, int CommonPathLength)>();
+
+        lock (_lock)
+        {
+            foreach (var shaderInfo in _shadersByName.Values)
+            {
+                var parsed = GetParsedShaderFromInfo(shaderInfo);
+                if (parsed?.Structs == null)
+                    continue;
+
+                foreach (var s in parsed.Structs)
+                {
+                    if (string.Equals(s.Name, structName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        var commonLength = contextFilePath != null
+                            ? GetCommonPathPrefixLength(contextFilePath, shaderInfo.FilePath)
+                            : 0;
+                        candidates.Add((s, shaderInfo.FilePath, commonLength));
+                    }
+                }
+            }
+        }
+
+        if (candidates.Count == 0)
+            return null;
+
+        // Return the struct from the shader closest to the context file
+        return candidates
+            .OrderByDescending(c => c.CommonPathLength)
+            .ThenBy(c => c.ShaderPath) // Stable sort for deterministic results
+            .First().Struct;
+    }
+
+    /// <summary>
+    /// Get fields for a struct type. Returns empty if type is not a known struct.
+    /// </summary>
+    public IEnumerable<ShaderStructField> GetStructFields(string structTypeName, string? contextFilePath = null)
+    {
+        var structDef = GetStruct(structTypeName, contextFilePath);
+        return structDef?.Fields ?? Enumerable.Empty<ShaderStructField>();
+    }
+
+    /// <summary>
+    /// Check if a type name is a known struct (vs built-in type or shader).
+    /// </summary>
+    public bool IsStructType(string typeName, string? contextFilePath = null)
+    {
+        return GetStruct(typeName, contextFilePath) != null;
+    }
+
+    /// <summary>
+    /// Get all struct names known to the workspace.
+    /// </summary>
+    public IReadOnlyList<string> GetAllStructNames()
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        lock (_lock)
+        {
+            foreach (var shaderInfo in _shadersByName.Values)
+            {
+                var parsed = GetParsedShaderFromInfo(shaderInfo);
+                if (parsed?.Structs == null)
+                    continue;
+
+                foreach (var s in parsed.Structs)
+                {
+                    names.Add(s.Name);
+                }
+            }
+        }
+
+        return names.ToList();
+    }
+
+    /// <summary>
+    /// Get parsed shader from info without going through the public method
+    /// (to avoid lock re-entrancy).
+    /// </summary>
+    private ParsedShader? GetParsedShaderFromInfo(ShaderInfo info)
+    {
+        // Try to get already-parsed shader
+        if (info.Parsed != null)
+            return info.Parsed;
+
+        // Try cached valid parse
+        if (_lastValidParse.TryGetValue(info.Name, out var cached))
+            return cached;
+
+        // Try to parse on-demand (without caching for performance)
+        try
+        {
+            if (File.Exists(info.FilePath))
+            {
+                var sourceCode = File.ReadAllText(info.FilePath);
+                return _parser.TryParse(info.Name, sourceCode);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Error reading shader for struct lookup: {Path}", info.FilePath);
+        }
+
+        return null;
+    }
+
+    #endregion
+
     /// <summary>
     /// Check if a shader name has duplicates (multiple files with same name).
     /// </summary>
@@ -318,6 +611,7 @@ public class ShaderWorkspace
     /// <summary>
     /// Get the shader that is "closest" to a given file path.
     /// Uses longest common path prefix to determine closeness.
+    /// IMPORTANT: Shaders with filename/name mismatch are deprioritized.
     /// </summary>
     public ShaderInfo? GetClosestShaderByName(string name, string? contextFilePath)
     {
@@ -330,27 +624,58 @@ public class ShaderWorkspace
             }
 
             // Find the shader with the longest common path prefix
+            // But deprioritize shaders with filename/shader name mismatch
             var contextDir = Path.GetDirectoryName(contextFilePath) ?? "";
-            ShaderInfo? closest = null;
-            int longestCommonLength = -1;
+            ShaderInfo? closestValid = null;
+            ShaderInfo? closestInvalid = null;
+            int longestValidCommonLength = -1;
+            int longestInvalidCommonLength = -1;
 
             foreach (var path in allPaths)
             {
+                if (!_shadersByPath.TryGetValue(path, out var shaderInfo))
+                    continue;
+
                 var shaderDir = Path.GetDirectoryName(path) ?? "";
                 var commonLength = GetCommonPathPrefixLength(contextDir, shaderDir);
 
-                if (commonLength > longestCommonLength)
+                // Check if this shader has a filename/name mismatch
+                var fileName = Path.GetFileNameWithoutExtension(path);
+                var hasFilenameMismatch = !string.Equals(fileName, shaderInfo.Name, StringComparison.OrdinalIgnoreCase);
+
+                if (hasFilenameMismatch)
                 {
-                    longestCommonLength = commonLength;
-                    if (_shadersByPath.TryGetValue(path, out var shaderInfo))
+                    // Track but deprioritize
+                    if (commonLength > longestInvalidCommonLength)
                     {
-                        closest = shaderInfo;
+                        longestInvalidCommonLength = commonLength;
+                        closestInvalid = shaderInfo;
+                    }
+                }
+                else
+                {
+                    // Valid shader - preferred
+                    if (commonLength > longestValidCommonLength)
+                    {
+                        longestValidCommonLength = commonLength;
+                        closestValid = shaderInfo;
                     }
                 }
             }
 
+            // Prefer valid shaders over invalid ones
+            if (closestValid != null)
+                return closestValid;
+
+            // Fall back to invalid shader if no valid one found
+            if (closestInvalid != null)
+            {
+                _logger.LogDebug("Using shader with filename mismatch for '{Name}' - no valid alternative found", name);
+                return closestInvalid;
+            }
+
             // Fall back to default if no match found
-            return closest ?? (_shadersByName.TryGetValue(name, out var defaultInfo) ? defaultInfo : null);
+            return _shadersByName.TryGetValue(name, out var defaultInfo) ? defaultInfo : null;
         }
     }
 
@@ -500,40 +825,105 @@ public class ShaderWorkspace
     /// </summary>
     public ShaderParseResult UpdateDocumentWithDiagnostics(string path, string content)
     {
-        var name = Path.GetFileNameWithoutExtension(path);
+        var fileBasedName = Path.GetFileNameWithoutExtension(path);
 
         lock (_lock)
         {
             if (!_shadersByPath.TryGetValue(path, out var info))
             {
                 var displayPath = GetDisplayPath(path);
-                info = new ShaderInfo(name, path, displayPath);
-                _shadersByName[name] = info;
+                var source = DetermineShaderSource(path);
+                info = new ShaderInfo(fileBasedName, path, displayPath, source);
+                _shadersByName[fileBasedName] = info;
                 _shadersByPath[path] = info;
                 _cachedShaderNames = null; // Invalidate cache for new shader
             }
 
             // Re-parse with new content
-            _parser.InvalidateCache(name);
-            var result = _parser.TryParseWithDiagnostics(name, content);
+            _parser.InvalidateCache(info.Name);
+            var result = _parser.TryParseWithDiagnostics(fileBasedName, content);
 
             // Update shader info
             info.Parsed = result.Shader;
 
+            // Handle shader name changes (when AST name differs from current registered name)
+            // This happens when user renames the shader in the file content
+            if (result.Shader != null && !string.IsNullOrEmpty(result.Shader.Name))
+            {
+                var astShaderName = result.Shader.Name;
+
+                // If the shader name from AST differs from the registered name, update the indices
+                if (!string.Equals(info.Name, astShaderName, StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogInformation("Shader name changed from '{OldName}' to '{NewName}' in file {Path}",
+                        info.Name, astShaderName, path);
+
+                    // Remove old name entry if it points to this file
+                    if (_shadersByName.TryGetValue(info.Name, out var oldEntry) &&
+                        string.Equals(oldEntry.FilePath, path, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _shadersByName.Remove(info.Name);
+                        _lastValidParse.Remove(info.Name);
+
+                        // Clean up old duplicate tracking
+                        if (_duplicateShaders.TryGetValue(info.Name, out var oldDuplicates))
+                        {
+                            oldDuplicates.Remove(path);
+                            if (oldDuplicates.Count <= 1)
+                            {
+                                _duplicateShaders.Remove(info.Name);
+                            }
+                        }
+                    }
+
+                    // Create new ShaderInfo with the correct AST-based name
+                    var displayPath = GetDisplayPath(path);
+                    var newInfo = new ShaderInfo(astShaderName, path, displayPath, info.Source);
+                    newInfo.Parsed = result.Shader;
+
+                    // Update indices with new name
+                    _shadersByPath[path] = newInfo;
+
+                    // Handle potential duplicate with new name
+                    if (_shadersByName.TryGetValue(astShaderName, out var existingWithNewName))
+                    {
+                        // Track as duplicate
+                        if (!_duplicateShaders.ContainsKey(astShaderName))
+                        {
+                            _duplicateShaders[astShaderName] = new List<string> { existingWithNewName.FilePath };
+                        }
+                        _duplicateShaders[astShaderName].Add(path);
+
+                        // Workspace shaders take priority
+                        if (newInfo.Source == ShaderSource.Workspace)
+                        {
+                            _shadersByName[astShaderName] = newInfo;
+                        }
+                    }
+                    else
+                    {
+                        _shadersByName[astShaderName] = newInfo;
+                    }
+
+                    info = newInfo;
+                    _cachedShaderNames = null;
+                }
+            }
+
             // Notify listeners that document was updated (for cache invalidation)
-            DocumentUpdated?.Invoke(name);
+            DocumentUpdated?.Invoke(info.Name);
 
             // Cache successful non-partial parses
             if (result.Shader != null && !result.IsPartial)
             {
-                _lastValidParse[name] = result.Shader;
+                _lastValidParse[info.Name] = result.Shader;
             }
             // If parse failed but we have a partial result, still use it
-            else if (result.Shader == null && _lastValidParse.TryGetValue(name, out var cached))
+            else if (result.Shader == null && _lastValidParse.TryGetValue(info.Name, out var cached))
             {
                 // Keep the last valid parse available but don't overwrite info.Parsed
                 // so diagnostics still show current errors
-                _logger.LogDebug("Parse failed for {Shader}, last valid parse still available", name);
+                _logger.LogDebug("Parse failed for {Shader}, last valid parse still available", info.Name);
             }
 
             return result;
@@ -894,6 +1284,19 @@ public class ShaderInfo
     /// True if this shader is from the user's workspace (editable), false if from Stride/vvvv (read-only).
     /// </summary>
     public bool IsWorkspaceShader => Source == ShaderSource.Workspace;
+
+    /// <summary>
+    /// True if the filename doesn't match the shader name (indicates a structural problem).
+    /// E.g., file "MyShader2.sdsl" contains "shader MyShader" - this is a mismatch.
+    /// </summary>
+    public bool HasFilenameMismatch
+    {
+        get
+        {
+            var fileName = Path.GetFileNameWithoutExtension(FilePath);
+            return !string.Equals(fileName, Name, StringComparison.OrdinalIgnoreCase);
+        }
+    }
 
     public ShaderInfo(string name, string filePath, string displayPath, ShaderSource source = ShaderSource.Stride)
     {

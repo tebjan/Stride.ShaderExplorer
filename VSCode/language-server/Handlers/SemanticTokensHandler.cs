@@ -50,6 +50,9 @@ public class SemanticTokensHandler : SemanticTokensHandlerBase
             return Task.CompletedTask;
         }
 
+        // Get the file path for context-aware type resolution
+        var contextPath = identifier.TextDocument.Uri.GetFileSystemPath();
+
         var lines = content.Split('\n');
 
         // First pass: collect locally defined structs
@@ -68,13 +71,13 @@ public class SemanticTokensHandler : SemanticTokensHandlerBase
         for (int lineNum = 0; lineNum < lines.Length; lineNum++)
         {
             var line = lines[lineNum].TrimEnd('\r');
-            ProcessLine(builder, line, lineNum, localStructs);
+            ProcessLine(builder, line, lineNum, localStructs, contextPath);
         }
 
         return Task.CompletedTask;
     }
 
-    private void ProcessLine(SemanticTokensBuilder builder, string line, int lineNum, HashSet<string> localStructs)
+    private void ProcessLine(SemanticTokensBuilder builder, string line, int lineNum, HashSet<string> localStructs, string? contextPath)
     {
         // 1. Shader declaration: "shader MyShader : Base1, Base2"
         var shaderDeclMatch = Regex.Match(line, @"^\s*shader\s+(\w+)");
@@ -118,16 +121,16 @@ public class SemanticTokensHandler : SemanticTokensHandlerBase
         {
             // Return type
             var returnType = methodMatch.Groups[1];
-            if (IsCustomType(returnType.Value, localStructs))
+            if (IsCustomType(returnType.Value, localStructs, contextPath))
             {
-                var tokenType = GetTypeTokenType(returnType.Value);
+                var tokenType = GetTypeTokenType(returnType.Value, localStructs, contextPath);
                 PushToken(builder, lineNum, returnType.Index, returnType.Length, tokenType, 0);
             }
 
             // Parameter types
             var paramsStr = methodMatch.Groups[3].Value;
             var paramsStart = methodMatch.Groups[3].Index;
-            ProcessParameterTypes(builder, paramsStr, lineNum, paramsStart, localStructs);
+            ProcessParameterTypes(builder, paramsStr, lineNum, paramsStart, localStructs, contextPath);
         }
 
         // 5. Variable declarations with custom types: "Particle p = ..."
@@ -140,9 +143,9 @@ public class SemanticTokensHandler : SemanticTokensHandlerBase
             foreach (Match match in Regex.Matches(line, @"\b(\w+)\s+(\w+)\s*[=;,\)]"))
             {
                 var typeName = match.Groups[1].Value;
-                if (IsCustomType(typeName, localStructs) && !IsKeyword(typeName))
+                if (IsCustomType(typeName, localStructs, contextPath) && !IsKeyword(typeName))
                 {
-                    var tokenType = GetTypeTokenType(typeName);
+                    var tokenType = GetTypeTokenType(typeName, localStructs, contextPath);
                     PushToken(builder, lineNum, match.Groups[1].Index, typeName.Length, tokenType, 0);
                 }
             }
@@ -152,9 +155,9 @@ public class SemanticTokensHandler : SemanticTokensHandlerBase
         foreach (Match match in Regex.Matches(line, @"<(\w+)>"))
         {
             var innerType = match.Groups[1].Value;
-            if (IsCustomType(innerType, localStructs))
+            if (IsCustomType(innerType, localStructs, contextPath))
             {
-                var tokenType = GetTypeTokenType(innerType);
+                var tokenType = GetTypeTokenType(innerType, localStructs, contextPath);
                 PushToken(builder, lineNum, match.Groups[1].Index, innerType.Length, tokenType, 0);
             }
         }
@@ -178,15 +181,15 @@ public class SemanticTokensHandler : SemanticTokensHandlerBase
         }
     }
 
-    private void ProcessParameterTypes(SemanticTokensBuilder builder, string paramsStr, int lineNum, int paramsStart, HashSet<string> localStructs)
+    private void ProcessParameterTypes(SemanticTokensBuilder builder, string paramsStr, int lineNum, int paramsStart, HashSet<string> localStructs, string? contextPath)
     {
         // Match "Type paramName" patterns
         foreach (Match match in Regex.Matches(paramsStr, @"(\w+)\s+\w+"))
         {
             var paramType = match.Groups[1].Value;
-            if (IsCustomType(paramType, localStructs))
+            if (IsCustomType(paramType, localStructs, contextPath))
             {
-                var tokenType = GetTypeTokenType(paramType);
+                var tokenType = GetTypeTokenType(paramType, localStructs, contextPath);
                 var absoluteIdx = paramsStart + match.Groups[1].Index;
                 PushToken(builder, lineNum, absoluteIdx, paramType.Length, tokenType, 0);
             }
@@ -205,7 +208,7 @@ public class SemanticTokensHandler : SemanticTokensHandlerBase
         }
     }
 
-    private bool IsCustomType(string name, HashSet<string> localStructs)
+    private bool IsCustomType(string name, HashSet<string> localStructs, string? contextPath)
     {
         // Skip HLSL built-in types
         if (IsHlslBuiltinType(name))
@@ -219,8 +222,12 @@ public class SemanticTokensHandler : SemanticTokensHandlerBase
         if (localStructs.Contains(name))
             return true;
 
-        // Check if it's a known shader
-        if (_workspace.GetShaderByName(name) != null)
+        // Check if it's a known shader (context-aware for duplicates)
+        if (_workspace.GetClosestShaderByName(name, contextPath) != null)
+            return true;
+
+        // Check if it's a struct from any shader in the workspace (context-aware)
+        if (_workspace.IsStructType(name, contextPath))
             return true;
 
         // Check if it starts with I (interface pattern)
@@ -271,12 +278,16 @@ public class SemanticTokensHandler : SemanticTokensHandlerBase
         return name.Length > 1 && name[0] == 'I' && char.IsUpper(name[1]);
     }
 
-    private static int GetTypeTokenType(string typeName)
+    private int GetTypeTokenType(string typeName, HashSet<string> localStructs, string? contextPath)
     {
         if (IsInterfaceType(typeName))
             return TokenTypes.Interface;
 
-        // Could differentiate between struct and shader here
+        // Check if it's a struct (local or from workspace, context-aware)
+        if (localStructs.Contains(typeName) || _workspace.IsStructType(typeName, contextPath))
+            return TokenTypes.Struct;
+
+        // Default to Type (for shaders and other custom types)
         return TokenTypes.Type;
     }
 

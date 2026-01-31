@@ -45,6 +45,7 @@ class Program
                 .WithHandler<SignatureHelpHandler>()
                 .WithHandler<CodeActionHandler>()
                 .WithHandler<SemanticTokensHandler>()
+                .WithHandler<DidChangeWatchedFilesHandler>()
                 .WithHandler<ShutdownHandler>()
                 .OnInitialize((server, request, token) =>
                 {

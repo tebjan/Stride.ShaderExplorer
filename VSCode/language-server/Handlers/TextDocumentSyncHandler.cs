@@ -131,6 +131,7 @@ public class TextDocumentSyncHandler : TextDocumentSyncHandlerBase, IDisposable
     public override async Task<Unit> Handle(DidCloseTextDocumentParams request, CancellationToken cancellationToken)
     {
         var uri = request.TextDocument.Uri;
+        var path = uri.GetFileSystemPath();
         _logger.LogDebug("Document closed: {Uri}", uri);
         _documentContents.Remove(uri);
 
@@ -140,6 +141,14 @@ public class TextDocumentSyncHandler : TextDocumentSyncHandlerBase, IDisposable
             await cts.CancelAsync();
             cts.Dispose();
             _diagnosticDebounce.Remove(uri);
+        }
+
+        // If the file no longer exists (e.g., it was renamed/deleted), clean up the workspace
+        // This handles the case where a file is renamed while open - VS Code sends didClose for old path
+        if (!File.Exists(path))
+        {
+            _logger.LogInformation("Closed file no longer exists, cleaning up workspace: {Path}", path);
+            _workspace.HandleFileDeleted(path);
         }
 
         return Unit.Value;

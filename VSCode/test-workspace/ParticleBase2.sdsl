@@ -1,5 +1,5 @@
 // Particle system base with Particle struct
-shader ParticleBase : ComputeBase
+shader ParticleBase2 : ComputeBase
 {
     // Particle data structure
     struct Particle

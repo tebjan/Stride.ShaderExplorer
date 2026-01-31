@@ -740,32 +740,37 @@ public class SemanticValidator
                 ValidateExpression(memberRef.Target, scope, diagnostics);
 
                 // For stream access (streams.X), validate the member exists
-                if (memberRef.Target is VariableReferenceExpression streamTarget &&
-                    HlslTypeSystem.IsStreamType(streamTarget.Name.Text))
+                // NOTE: Check the variable's TYPE, not its NAME, to avoid false positives
+                // when a variable is named "output" (which would match "Output" stream type)
+                if (memberRef.Target is VariableReferenceExpression streamTarget)
                 {
-                    var memberName = memberRef.Member.Text;
-                    if (!scope.IsDefined(memberName))
+                    var streamTargetType = scope.GetVariableType(streamTarget.Name.Text);
+                    if (streamTargetType != null && HlslTypeSystem.IsStreamType(streamTargetType))
                     {
-                        var span = memberRef.Member.Span;
-                        // Fallback to memberRef span if member span is invalid
-                        if (span.Location.Line <= 0 && span.Location.Column <= 0)
-                            span = memberRef.Span;
-
-                        if (span.Location.Line > 0 || span.Location.Column > 0)
+                        var memberName = memberRef.Member.Text;
+                        if (!scope.IsDefined(memberName))
                         {
-                            var message = BuildUndefinedMessage(memberName);
-                            diagnostics.Add(new Diagnostic
+                            var span = memberRef.Member.Span;
+                            // Fallback to memberRef span if member span is invalid
+                            if (span.Location.Line <= 0 && span.Location.Column <= 0)
+                                span = memberRef.Span;
+
+                            if (span.Location.Line > 0 || span.Location.Column > 0)
                             {
-                                Range = new Range(
-                                    Math.Max(0, span.Location.Line - 1),
-                                    Math.Max(0, span.Location.Column - 1),
-                                    Math.Max(0, span.Location.Line - 1),
-                                    Math.Max(0, span.Location.Column - 1 + memberName.Length)
-                                ),
-                                Severity = DiagnosticSeverity.Error,
-                                Source = "sdsl",
-                                Message = message
-                            });
+                                var message = BuildUndefinedMessage(memberName);
+                                diagnostics.Add(new Diagnostic
+                                {
+                                    Range = new Range(
+                                        Math.Max(0, span.Location.Line - 1),
+                                        Math.Max(0, span.Location.Column - 1),
+                                        Math.Max(0, span.Location.Line - 1),
+                                        Math.Max(0, span.Location.Column - 1 + memberName.Length)
+                                    ),
+                                    Severity = DiagnosticSeverity.Error,
+                                    Source = "sdsl",
+                                    Message = message
+                                });
+                            }
                         }
                     }
                 }
@@ -941,13 +946,18 @@ public class SemanticValidator
 
                 // Check if target is a stream type (streams.X, Input.X, etc.)
                 // Stream members are stored as shader variables, so look them up in scope
-                if (memberRef.Target is VariableReferenceExpression streamRef &&
-                    HlslTypeSystem.IsStreamType(streamRef.Name.Text))
+                // NOTE: Check the variable's TYPE, not its NAME, to avoid false positives
+                // when a variable is named "output" (which would match "Output" stream type)
+                if (memberRef.Target is VariableReferenceExpression streamRef)
                 {
-                    // Stream member - look up from shader variables in scope
-                    var streamMemberType = scope.GetVariableType(memberName);
-                    if (streamMemberType != null)
-                        return streamMemberType;
+                    var streamRefType = scope.GetVariableType(streamRef.Name.Text);
+                    if (streamRefType != null && HlslTypeSystem.IsStreamType(streamRefType))
+                    {
+                        // Stream member - look up from shader variables in scope
+                        var streamMemberType = scope.GetVariableType(memberName);
+                        if (streamMemberType != null)
+                            return streamMemberType;
+                    }
                 }
 
                 // Check if this is a swizzle operation (e.g., color.xyz)

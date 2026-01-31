@@ -138,6 +138,14 @@
       {
         "command": "strideShaderTools.openShaderLink",
         "title": "Stride Shaders: Open Shader Link"
+      },
+      {
+        "command": "strideShaderTools.renameFile",
+        "title": "Stride Shaders: Rename Shader File"
+      },
+      {
+        "command": "strideShaderTools.renameShaderInFile",
+        "title": "Stride Shaders: Rename Shader Declaration"
       }
     ]
   },

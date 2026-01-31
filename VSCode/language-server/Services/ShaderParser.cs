@@ -27,6 +27,20 @@ internal static class ShaderExtensions
         }
         return result;
     }
+
+    public static EffectBlock? GetFirstEffectDecl(this Shader shader)
+    {
+        var result = shader.Declarations.OfType<EffectBlock>().FirstOrDefault();
+        if (result == null)
+        {
+            var nameSpace = shader.Declarations.OfType<NamespaceBlock>().FirstOrDefault();
+            if (nameSpace != null)
+            {
+                result = nameSpace.Body.OfType<EffectBlock>().FirstOrDefault();
+            }
+        }
+        return result;
+    }
 }
 
 /// <summary>
@@ -131,15 +145,28 @@ public class ShaderParser
                     _logger.LogDebug("Extracted partial AST for {ShaderName} despite errors", shaderName);
                 }
             }
-            else if (parsingResult.HasErrors)
+            else
             {
-                // Fallback: try regex extraction for basic structure
-                result.Shader = TryExtractShaderStructure(shaderName, sourceCode);
-                result.IsPartial = result.Shader != null;
-
-                if (result.Shader != null)
+                // Check for effect block (effect files use different syntax: "effect Name { mixin ... }")
+                var effectBlock = parsingResult.Shader?.GetFirstEffectDecl();
+                if (effectBlock != null)
                 {
-                    _logger.LogDebug("Extracted shader structure via regex fallback for {ShaderName}", shaderName);
+                    var effectName = effectBlock.Name?.Text ?? shaderName;
+                    result.Shader = ParsedShader.CreateEffect(effectName, effectBlock.IsPartial);
+                    result.IsPartial = false;
+                    _logger.LogDebug("Parsed effect file {EffectName} (partial={IsPartial})",
+                        effectName, effectBlock.IsPartial);
+                }
+                else if (parsingResult.HasErrors)
+                {
+                    // Fallback: try regex extraction for basic structure
+                    result.Shader = TryExtractShaderStructure(shaderName, sourceCode);
+                    result.IsPartial = result.Shader != null;
+
+                    if (result.Shader != null)
+                    {
+                        _logger.LogDebug("Extracted shader structure via regex fallback for {ShaderName}", shaderName);
+                    }
                 }
             }
 
@@ -741,6 +768,17 @@ public class ParsedShader
     public bool IsPartial { get; }
 
     /// <summary>
+    /// Returns true if this is an effect file (uses "effect" keyword, not "shader").
+    /// Effect files are composition/configuration files that mixin other shaders.
+    /// </summary>
+    public bool IsEffectFile { get; private set; }
+
+    /// <summary>
+    /// Returns true if this effect file is declared as partial.
+    /// </summary>
+    public bool IsPartialEffect { get; private set; }
+
+    /// <summary>
     /// Base shader names (may include template arguments like "ColorModulator<1.0f>").
     /// Use BaseShaderReferences for parsed information.
     /// </summary>
@@ -765,6 +803,7 @@ public class ParsedShader
     public IReadOnlyList<ShaderVariable> Variables { get; }
     public IReadOnlyList<ShaderMethod> Methods { get; }
     public IReadOnlyList<ShaderComposition> Compositions { get; }
+    public IReadOnlyList<ShaderStruct> Structs { get; }
 
     public ParsedShader(string name, Shader shader, ClassType shaderClass, List<TemplateParameter>? templateParams = null)
     {
@@ -805,6 +844,56 @@ public class ParsedShader
             .Where(v => v.Qualifiers.Contains(StrideStorageQualifier.Compose))
             .Select(v => new ShaderComposition(v))
             .ToList();
+
+        // Extract struct definitions from shader declarations AND class members
+        Structs = ExtractStructDefinitions(shader, shaderClass);
+    }
+
+    /// <summary>
+    /// Extract struct definitions from shader declarations and class members.
+    /// In SDSL, structs are typically defined INSIDE the shader class, not at top level.
+    /// </summary>
+    private static List<ShaderStruct> ExtractStructDefinitions(Shader shader, ClassType? shaderClass)
+    {
+        var structs = new List<ShaderStruct>();
+        var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // 1. Check top-level shader declarations
+        if (shader.Declarations != null)
+        {
+            foreach (var decl in shader.Declarations)
+            {
+                if (decl is StructType structType && seenNames.Add(structType.Name?.Text ?? ""))
+                {
+                    structs.Add(new ShaderStruct(structType));
+                }
+                // Also check inside namespace blocks
+                else if (decl is NamespaceBlock ns && ns.Body != null)
+                {
+                    foreach (var innerDecl in ns.Body)
+                    {
+                        if (innerDecl is StructType innerStruct && seenNames.Add(innerStruct.Name?.Text ?? ""))
+                        {
+                            structs.Add(new ShaderStruct(innerStruct));
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Check shader class members (where structs are typically defined in SDSL)
+        if (shaderClass?.Members != null)
+        {
+            foreach (var member in shaderClass.Members)
+            {
+                if (member is StructType memberStruct && seenNames.Add(memberStruct.Name?.Text ?? ""))
+                {
+                    structs.Add(new ShaderStruct(memberStruct));
+                }
+            }
+        }
+
+        return structs;
     }
 
     /// <summary>
@@ -886,12 +975,15 @@ public class ParsedShader
         Shader = null;
         ShaderClass = null;
         IsPartial = true;
+        IsEffectFile = false;
+        IsPartialEffect = false;
         BaseShaderNames = baseShaderNames;
         BaseShaderReferences = baseShaderNames.Select(n => new BaseShaderReference(n)).ToList();
         TemplateParameters = templateParameters;
         Variables = variables;
         Methods = methods;
         Compositions = new List<ShaderComposition>();
+        Structs = new List<ShaderStruct>();
     }
 
     /// <summary>
@@ -911,6 +1003,25 @@ public class ParsedShader
             methods.Select(m => ShaderMethod.CreatePartial(m.Name, m.ReturnType)).ToList(),
             templateParams ?? new List<TemplateParameter>()
         );
+    }
+
+    /// <summary>
+    /// Create a ParsedShader for an effect file (uses "effect" keyword instead of "shader").
+    /// Effect files are composition/configuration files with no inheritance or members.
+    /// </summary>
+    public static ParsedShader CreateEffect(string name, bool isPartialEffect)
+    {
+        return new ParsedShader(
+            name,
+            baseShaderNames: new List<string>(),
+            variables: new List<ShaderVariable>(),
+            methods: new List<ShaderMethod>(),
+            templateParameters: new List<TemplateParameter>()
+        )
+        {
+            IsEffectFile = true,
+            IsPartialEffect = isPartialEffect
+        };
     }
 }
 
@@ -1175,5 +1286,102 @@ public class ShaderComposition
         Name = variable.Name.Text;
         TypeName = variable.Type?.Name?.Text ?? "unknown";
         Location = variable.Span;
+    }
+}
+
+/// <summary>
+/// Represents a struct definition in a shader.
+/// </summary>
+public class ShaderStruct
+{
+    public string Name { get; }
+    public IReadOnlyList<ShaderStructField> Fields { get; }
+    public SourceSpan Location { get; }
+
+    public ShaderStruct(StructType structType)
+    {
+        Name = structType.Name?.Text ?? "unknown";
+        Location = structType.Span;
+        Fields = structType.Fields
+            .Select(f => new ShaderStructField(f))
+            .ToList();
+    }
+
+    // Private constructor for partial structs
+    private ShaderStruct(string name, List<ShaderStructField> fields)
+    {
+        Name = name;
+        Fields = fields;
+        Location = new SourceSpan();
+    }
+
+    public static ShaderStruct CreatePartial(string name, List<ShaderStructField> fields)
+    {
+        return new ShaderStruct(name, fields);
+    }
+}
+
+/// <summary>
+/// Represents a field in a struct definition.
+/// </summary>
+public class ShaderStructField
+{
+    public string Name { get; }
+    public string TypeName { get; }
+    public bool IsArray { get; }
+    public SourceSpan Location { get; }
+
+    public ShaderStructField(Variable field)
+    {
+        Name = field.Name?.Text ?? "unknown";
+        TypeName = GetFieldTypeName(field);
+        IsArray = TypeName.EndsWith("[]");
+        Location = field.Span;
+    }
+
+    private static string GetFieldTypeName(Variable field)
+    {
+        var baseType = field.Type?.Name?.Text ?? "unknown";
+
+        // Check if it's an array type
+        try
+        {
+            var typeString = field.Type?.ToString() ?? "";
+            if (typeString.Contains("[]") || baseType == "$array")
+            {
+                if (baseType == "$array")
+                {
+                    // Try to extract actual type from type string
+                    if (typeString.Contains("<") && typeString.Contains(">"))
+                    {
+                        var start = typeString.IndexOf('<') + 1;
+                        var end = typeString.IndexOf('>');
+                        if (end > start)
+                        {
+                            return typeString.Substring(start, end - start).Trim() + "[]";
+                        }
+                    }
+                    return "unknown[]";
+                }
+                return baseType + "[]";
+            }
+        }
+        catch { }
+
+        return baseType;
+    }
+
+    // Private constructor for partial fields
+    private ShaderStructField(string name, string typeName)
+    {
+        Name = name;
+        TypeName = typeName;
+        IsArray = typeName.EndsWith("[]");
+        Location = new SourceSpan();
+    }
+
+    public static ShaderStructField CreatePartial(string name, string typeName)
+    {
+        return new ShaderStructField(name, typeName);
     }
 }

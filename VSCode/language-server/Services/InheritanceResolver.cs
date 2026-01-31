@@ -115,7 +115,10 @@ public class InheritanceResolver
         }
 
         // Compute the chain
-        var chain = ResolveInheritanceChainInternal(shaderName, new HashSet<string>(), contextFilePath);
+        // Use two separate sets:
+        // - currentPath: tracks the current traversal path (for detecting true circular inheritance)
+        // - allResolved: tracks all shaders already processed (for diamond inheritance optimization)
+        var chain = ResolveInheritanceChainInternal(shaderName, new HashSet<string>(), new HashSet<string>(), contextFilePath);
 
         // Cache it (re-check _chainCache in case it was invalidated during computation)
         lock (_cacheLock)
@@ -126,14 +129,29 @@ public class InheritanceResolver
         return chain;
     }
 
-    private List<ParsedShader> ResolveInheritanceChainInternal(string shaderName, HashSet<string> visited, string? contextFilePath)
+    private List<ParsedShader> ResolveInheritanceChainInternal(
+        string shaderName,
+        HashSet<string> currentPath,   // Tracks current traversal path (for circular detection)
+        HashSet<string> allResolved,   // Tracks all shaders already fully resolved (for diamond inheritance)
+        string? contextFilePath)
     {
-        if (visited.Contains(shaderName))
+        // True circular inheritance: same shader appears twice in current path
+        if (currentPath.Contains(shaderName))
         {
             _logger.LogWarning("Circular inheritance detected for shader {ShaderName}", shaderName);
             return new List<ParsedShader>();
         }
-        visited.Add(shaderName);
+
+        // Diamond inheritance optimization: skip if already resolved in another branch
+        // (e.g., A -> B -> D and A -> C -> D, D is processed once)
+        if (allResolved.Contains(shaderName))
+        {
+            _logger.LogDebug("Shader {ShaderName} already resolved (diamond inheritance), skipping", shaderName);
+            return new List<ParsedShader>();
+        }
+
+        // Add to current path for circular detection
+        currentPath.Add(shaderName);
 
         var result = new List<ParsedShader>();
 
@@ -143,6 +161,7 @@ public class InheritanceResolver
         if (parsed == null)
         {
             _logger.LogWarning("Could not get parsed shader for {ShaderName}", shaderName);
+            currentPath.Remove(shaderName);
             return result;
         }
 
@@ -154,6 +173,8 @@ public class InheritanceResolver
         {
             _logger.LogDebug("Shader {ShaderName} has no base shaders (IsPartial={IsPartial})",
                 shaderName, parsed.IsPartial);
+            currentPath.Remove(shaderName);
+            allResolved.Add(shaderName);
             return result;
         }
 
@@ -179,7 +200,7 @@ public class InheritanceResolver
                     baseRef.HasTemplateArguments ? $", template args: [{string.Join(", ", baseRef.TemplateArguments)}]" : "");
                 result.Add(baseParsed);
                 // Recursively add base shader's bases (using current file path as context)
-                result.AddRange(ResolveInheritanceChainInternal(lookupName, visited, currentFilePath));
+                result.AddRange(ResolveInheritanceChainInternal(lookupName, currentPath, allResolved, currentFilePath));
             }
             else
             {
@@ -187,6 +208,11 @@ public class InheritanceResolver
                     lookupName, shaderName, baseRef.FullName);
             }
         }
+
+        // Remove from current path (done with this branch)
+        currentPath.Remove(shaderName);
+        // Mark as fully resolved (won't process again in other branches)
+        allResolved.Add(shaderName);
 
         return result;
     }
@@ -247,6 +273,27 @@ public class InheritanceResolver
         {
             foreach (var c in baseShader.Compositions)
                 yield return (c, baseShader.Name);
+        }
+    }
+
+    /// <summary>
+    /// Gets all structs including inherited ones.
+    /// Returns tuples of (Struct, ShaderName where it's defined).
+    /// Local structs come first, then inherited ones in inheritance order.
+    /// </summary>
+    /// <param name="shader">The shader to get structs for</param>
+    /// <param name="contextFilePath">Optional file path for context-aware resolution of duplicate shaders</param>
+    public IEnumerable<(ShaderStruct Struct, string DefinedIn)> GetAllStructs(ParsedShader shader, string? contextFilePath = null)
+    {
+        // Local structs first
+        foreach (var s in shader.Structs)
+            yield return (s, shader.Name);
+
+        // Then inherited structs
+        foreach (var baseShader in ResolveInheritanceChain(shader.Name, contextFilePath))
+        {
+            foreach (var s in baseShader.Structs)
+                yield return (s, baseShader.Name);
         }
     }
 

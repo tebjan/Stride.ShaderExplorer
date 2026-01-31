@@ -73,3 +73,12 @@ jobs:
           fi
         env:
           VSCE_PAT: ${{ secrets.VS_MARKETPLACE_TOKEN }}
+
+      - name: Publish to Open VSX Registry
+        working-directory: VSCode/vscode-extension
+        run: |
+          if [ "${{ steps.version.outputs.PRE_RELEASE }}" = "true" ]; then
+            npx ovsx publish -p ${{ secrets.OPEN_VSX_TOKEN }} --pre-release
+          else
+            npx ovsx publish -p ${{ secrets.OPEN_VSX_TOKEN }}
+          fi

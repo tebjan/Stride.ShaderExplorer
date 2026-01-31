@@ -77,8 +77,11 @@ public class HoverHandler : HoverHandlerBase
         }
 
         var path = uri.GetFileSystemPath();
-        var currentShaderName = Path.GetFileNameWithoutExtension(path);
-        var currentParsed = _workspace.GetParsedShader(currentShaderName);
+        var fileName = Path.GetFileNameWithoutExtension(path);
+        // Use full path for lookup since shader name may differ from filename
+        var currentParsed = _workspace.GetParsedShader(path);
+        // Use actual shader name (not filename) for local comparisons
+        var currentShaderName = currentParsed?.Name ?? fileName;
 
         // If we have a member context (something.word), check for swizzle or member access
         if (!string.IsNullOrEmpty(memberContext))
@@ -89,7 +92,6 @@ public class HoverHandler : HoverHandlerBase
         }
 
         // Check if hovering on the shader declaration name and there's a filename mismatch
-        var fileName = Path.GetFileNameWithoutExtension(path);
         if (currentParsed != null && word == currentParsed.Name && fileName != currentParsed.Name)
         {
             var markdown = BuildFilenameMismatchHoverContent(fileName, currentParsed.Name, path);
