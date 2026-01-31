@@ -22,7 +22,7 @@ export interface MemberInfo {
     sourceShader: string;
     isStage: boolean;
     isEntryPoint: boolean;
-    semantic: string | null;  // Semantic binding (e.g., "POSITION", "SV_Target")
+    semantic: string | null; // Semantic binding (e.g., "POSITION", "SV_Target")
 }
 
 export interface MemberGroup {
@@ -360,11 +360,13 @@ export class UnifiedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
             // Visual signals (orthogonal):
             // - Icon: plug for semantic bindings, category icon otherwise
             // - Color: blue for stage, cyan for non-stage (terminal colors always defined)
-            const hasSemantic = member.semantic && (element.category === 'streams' || element.category === 'variables');
+            const hasSemantic =
+                member.semantic &&
+                (element.category === 'streams' || element.category === 'variables');
             const icon = hasSemantic ? 'plug' : baseIcon;
             const color = member.isStage
-                ? new vscode.ThemeColor('terminal.ansiBlue')    // blue for stage
-                : new vscode.ThemeColor('terminal.ansiCyan');   // cyan for non-stage
+                ? new vscode.ThemeColor('terminal.ansiBlue') // blue for stage
+                : new vscode.ThemeColor('terminal.ansiCyan'); // cyan for non-stage
             item.iconPath = new vscode.ThemeIcon(icon, color);
         }
 
