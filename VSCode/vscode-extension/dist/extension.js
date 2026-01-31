@@ -18184,7 +18184,6 @@ var UnifiedTreeProvider = class {
     );
     item.id = nodeId;
     item.iconPath = new vscode2.ThemeIcon("symbol-class");
-    item.description = "current shader";
     item.contextValue = "currentShader";
     return item;
   }
@@ -18268,29 +18267,27 @@ var UnifiedTreeProvider = class {
   }
   createMemberItem(element) {
     const member = element.member;
-    const stagePrefix = member.isStage ? "stage " : "";
     let label;
     if (element.category === "methods") {
-      label = `${stagePrefix}${member.type} ${member.name}${member.signature || "()"}`;
+      label = `${member.type} ${member.name}${member.signature || "()"}`;
     } else if (element.category === "streams") {
-      label = `${stagePrefix}${member.type} ${member.name}`;
+      label = `${member.type} ${member.name}`;
     } else {
-      label = `${stagePrefix}${member.type} ${member.name}`;
+      label = `${member.type} ${member.name}`;
     }
     const item = new vscode2.TreeItem(label, vscode2.TreeItemCollapsibleState.None);
-    if (member.isLocal) {
-      if (member.isEntryPoint) {
-        const stageName = this.getShaderStageName(member.name);
-        item.description = stageName;
-      }
-    } else {
-      if (member.isEntryPoint) {
-        const stageName = this.getShaderStageName(member.name);
-        item.description = `${member.sourceShader} \u2022 ${stageName}`;
-      } else {
-        item.description = member.sourceShader;
-      }
+    const descParts = [];
+    if (member.semantic) {
+      descParts.push(`: ${member.semantic}`);
     }
+    if (member.isEntryPoint) {
+      const stageName = this.getShaderStageName(member.name);
+      descParts.push(stageName);
+    }
+    if (!member.isLocal) {
+      descParts.push(member.sourceShader);
+    }
+    item.description = descParts.length > 0 ? descParts.join(" \u2022 ") : void 0;
     if (member.isEntryPoint) {
       item.iconPath = new vscode2.ThemeIcon("play", new vscode2.ThemeColor("charts.green"));
     } else {
@@ -18305,7 +18302,11 @@ var UnifiedTreeProvider = class {
         "symbol-field",
         "symbol-constant"
       ];
-      item.iconPath = new vscode2.ThemeIcon(member.isLocal ? localIcon : inheritedIcon);
+      const baseIcon = member.isLocal ? localIcon : inheritedIcon;
+      const hasSemantic = member.semantic && (element.category === "streams" || element.category === "variables");
+      const icon = hasSemantic ? "plug" : baseIcon;
+      const color = member.isStage ? new vscode2.ThemeColor("terminal.ansiBlue") : new vscode2.ThemeColor("terminal.ansiCyan");
+      item.iconPath = new vscode2.ThemeIcon(icon, color);
     }
     item.tooltip = new vscode2.MarkdownString();
     const qualifiers = member.isStage ? "stage " : "";
@@ -18319,6 +18320,11 @@ var UnifiedTreeProvider = class {
         item.tooltip.appendMarkdown(`
 
 **Shader Stage Entry Point** (${stageName})`);
+      }
+      if (member.semantic) {
+        item.tooltip.appendMarkdown(`
+
+**Semantics:** ${member.semantic}`);
       }
     } else if (element.category === "streams") {
       item.tooltip.appendCodeblock(
@@ -18859,6 +18865,34 @@ async function startLanguageServer(context) {
         const result = await next(document, position, token);
         if (!result) return result;
         return transformHoverWithClickableLinks(result);
+      },
+      // Intercept definition requests to use our openShaderFile for consistent behavior
+      // This ensures workspace shaders open as editable, external shaders as read-only
+      provideDefinition: async (document, position, token, next) => {
+        const result = await next(document, position, token);
+        if (!result) return result;
+        let targetUri;
+        let targetLine;
+        if (Array.isArray(result)) {
+          const first = result[0];
+          if (first) {
+            if ("targetUri" in first) {
+              targetUri = first.targetUri;
+              targetLine = first.targetRange.start.line + 1;
+            } else if ("uri" in first) {
+              targetUri = first.uri;
+              targetLine = first.range.start.line + 1;
+            }
+          }
+        } else if ("uri" in result) {
+          targetUri = result.uri;
+          targetLine = result.range.start.line + 1;
+        }
+        if (targetUri && targetUri.scheme === "file") {
+          await openShaderFile(targetUri.fsPath, targetLine);
+          return null;
+        }
+        return result;
       }
     }
   };
@@ -18963,7 +18997,6 @@ async function openShaderFile(filePath, line, isWorkspaceShader) {
       viewColumn: vscode3.ViewColumn.Active,
       preserveFocus: false,
       preview: !isEditable
-      // Preview mode for external files (can be replaced by next navigation)
     });
     if (line !== void 0 && line > 0) {
       const lineIndex = line - 1;

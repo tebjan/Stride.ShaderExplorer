@@ -284,20 +284,21 @@ class Program
                     Name: variable.Name,
                     Type: variable.TypeName,
                     Signature: "",
-                    Comment: null,
+                    Comment: variable.Documentation,
                     Line: variable.Location.Location.Line,
                     FilePath: filePath,
                     IsLocal: isLocal,
                     SourceShader: definedIn,
                     IsStage: variable.IsStage,
-                    IsEntryPoint: false  // Variables are never entry points
+                    IsEntryPoint: false,  // Variables are never entry points
+                    Semantic: variable.SemanticBinding  // e.g., "SV_Position", "TEXCOORD0"
                 );
 
                 if (variable.IsStream)
                 {
                     streams.Add(memberInfo);
                 }
-                else
+                else if (!variable.IsCompose)  // Compositions shown separately
                 {
                     if (!variableGroups.ContainsKey(definedIn))
                         variableGroups[definedIn] = [];
@@ -312,23 +313,38 @@ class Program
                 var filePath = shaderInfo?.FilePath ?? "";
                 var isLocal = definedIn == shaderName;
 
-                var parameters = string.Join(", ", method.Parameters.Select(p => $"{p.TypeName} {p.Name}"));
+                // Include semantic bindings in parameter display
+                var parameters = string.Join(", ", method.Parameters.Select(p =>
+                {
+                    var paramStr = $"{p.TypeName} {p.Name}";
+                    if (!string.IsNullOrEmpty(p.SemanticBinding))
+                        paramStr += $" : {p.SemanticBinding}";
+                    return paramStr;
+                }));
                 var signature = $"({parameters})";
 
                 // Check if this is a shader stage entry point
                 var isEntryPoint = IsShaderStageEntryPoint(method.Name);
 
+                // Collect parameter semantics for display (e.g., "POSITION, SV_Target")
+                var paramSemantics = method.Parameters
+                    .Where(p => !string.IsNullOrEmpty(p.SemanticBinding))
+                    .Select(p => p.SemanticBinding)
+                    .ToList();
+                var semanticSummary = paramSemantics.Count > 0 ? string.Join(", ", paramSemantics) : null;
+
                 var memberInfo = new MemberInfo(
                     Name: method.Name,
                     Type: method.ReturnType,
                     Signature: signature,
-                    Comment: null,
+                    Comment: method.Documentation,
                     Line: method.Location.Location.Line,
                     FilePath: filePath,
                     IsLocal: isLocal,
                     SourceShader: definedIn,
                     IsStage: method.IsStage,
-                    IsEntryPoint: isEntryPoint
+                    IsEntryPoint: isEntryPoint,
+                    Semantic: semanticSummary
                 );
 
                 if (!methodGroups.ContainsKey(definedIn))

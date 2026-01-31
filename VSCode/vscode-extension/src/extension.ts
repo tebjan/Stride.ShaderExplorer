@@ -487,6 +487,44 @@ async function startLanguageServer(context: vscode.ExtensionContext): Promise<vo
                 // Transform the hover content to include clickable links
                 return transformHoverWithClickableLinks(result);
             },
+            // Intercept definition requests to use our openShaderFile for consistent behavior
+            // This ensures workspace shaders open as editable, external shaders as read-only
+            provideDefinition: async (document, position, token, next) => {
+                const result = await next(document, position, token);
+                if (!result) return result;
+
+                // Extract the first location from the result
+                let targetUri: vscode.Uri | undefined;
+                let targetLine: number | undefined;
+
+                if (Array.isArray(result)) {
+                    const first = result[0];
+                    if (first) {
+                        if ('targetUri' in first) {
+                            // DefinitionLink
+                            targetUri = first.targetUri;
+                            targetLine = first.targetRange.start.line + 1;
+                        } else if ('uri' in first) {
+                            // Location
+                            targetUri = first.uri;
+                            targetLine = first.range.start.line + 1;
+                        }
+                    }
+                } else if ('uri' in result) {
+                    targetUri = result.uri;
+                    targetLine = result.range.start.line + 1;
+                }
+
+                if (targetUri && targetUri.scheme === 'file') {
+                    // Use our openShaderFile which handles workspace vs external consistently
+                    // Workspace: editable, pinned | External: read-only, preview
+                    await openShaderFile(targetUri.fsPath, targetLine);
+                    return null;
+                }
+
+                // For non-file URIs, let VS Code handle it
+                return result;
+            },
         },
     };
 
@@ -651,10 +689,12 @@ async function openShaderFile(
         const doc = await vscode.workspace.openTextDocument(uri);
 
         // Show the document
+        // Workspace files: editable, pinned tab
+        // External files: read-only, preview mode (can be replaced by next navigation)
         const editor = await vscode.window.showTextDocument(doc, {
             viewColumn: vscode.ViewColumn.Active,
             preserveFocus: false,
-            preview: !isEditable, // Preview mode for external files (can be replaced by next navigation)
+            preview: !isEditable,
         });
 
         // Navigate to specific line if provided

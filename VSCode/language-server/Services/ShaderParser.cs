@@ -140,6 +140,9 @@ public class ShaderParser
                 result.Shader = new ParsedShader(shaderName, parsingResult.Shader!, shaderClass, templateParams);
                 result.IsPartial = parsingResult.HasErrors;
 
+                // Apply documentation comments from separate scanner
+                ApplyDocumentationComments(result.Shader, sourceCode);
+
                 if (parsingResult.HasErrors)
                 {
                     _logger.LogDebug("Extracted partial AST for {ShaderName} despite errors", shaderName);
@@ -223,6 +226,31 @@ public class ShaderParser
             }
 
             return result.Shader;
+        }
+    }
+
+    /// <summary>
+    /// Apply documentation comments from source code to parsed shader elements.
+    /// Uses CommentScanner to extract /// and // comments and associate them
+    /// with variables and methods by line number.
+    /// </summary>
+    private void ApplyDocumentationComments(ParsedShader shader, string sourceCode)
+    {
+        try
+        {
+            var scanner = new CommentScanner();
+            var comments = scanner.ScanDocComments(sourceCode);
+
+            if (comments.Count > 0)
+            {
+                shader.ApplyDocumentation(comments);
+                _logger.LogDebug("Applied {Count} documentation comments to shader {ShaderName}",
+                    comments.Count, shader.Name);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error applying documentation comments to shader {ShaderName}", shader.Name);
         }
     }
 
@@ -850,6 +878,36 @@ public class ParsedShader
     }
 
     /// <summary>
+    /// Apply documentation comments to variables and methods.
+    /// Called after construction with comments from CommentScanner.
+    /// </summary>
+    public void ApplyDocumentation(Dictionary<int, string> comments)
+    {
+        if (comments == null || comments.Count == 0)
+            return;
+
+        // Apply to variables - match by line number
+        foreach (var variable in Variables.Cast<ShaderVariable>())
+        {
+            var lineNumber = variable.Location.Location.Line;
+            if (comments.TryGetValue(lineNumber, out var doc))
+            {
+                variable.Documentation = doc;
+            }
+        }
+
+        // Apply to methods - match by line number
+        foreach (var method in Methods.Cast<ShaderMethod>())
+        {
+            var lineNumber = method.Location.Location.Line;
+            if (comments.TryGetValue(lineNumber, out var doc))
+            {
+                method.Documentation = doc;
+            }
+        }
+    }
+
+    /// <summary>
     /// Extract struct definitions from shader declarations and class members.
     /// In SDSL, structs are typically defined INSIDE the shader class, not at top level.
     /// </summary>
@@ -1034,6 +1092,15 @@ public class ShaderVariable
     public bool IsCompose { get; }
     public SourceSpan Location { get; }
 
+    // NEW: Rich metadata from AST
+    public string? DefaultValue { get; }
+    public IReadOnlyList<ShaderAttribute> Attributes { get; }
+    public bool IsConst { get; }
+    public bool IsStatic { get; }
+    public bool IsGroupshared { get; }
+    public string? Documentation { get; internal set; }  // Set by comment scanner
+    public string? SemanticBinding { get; }  // e.g., "SV_Position", "TEXCOORD0"
+
     public ShaderVariable(Variable variable)
     {
         Name = variable.Name.Text;
@@ -1042,6 +1109,74 @@ public class ShaderVariable
         IsStream = variable.Qualifiers.Contains(StrideStorageQualifier.Stream);
         IsCompose = variable.Qualifiers.Contains(StrideStorageQualifier.Compose);
         Location = variable.Span;
+
+        // Extract default/initial value
+        DefaultValue = ExtractDefaultValue(variable);
+
+        // Extract attributes
+        Attributes = ExtractAttributes(variable.Attributes);
+
+        // Extract additional qualifiers
+        var qualText = variable.Qualifiers?.ToString() ?? "";
+        IsConst = qualText.Contains("const");
+        IsStatic = qualText.Contains("static");
+        IsGroupshared = qualText.Contains("groupshared");
+
+        // Extract semantic binding (e.g., ": SV_Position")
+        SemanticBinding = ExtractSemantic(variable);
+    }
+
+    private static string? ExtractSemantic(Variable variable)
+    {
+        // Semantic is stored as a Qualifier within the variable's Qualifiers composite
+        // Use direct type checking since we have access to Stride.Core.Shaders.Ast.Hlsl.Semantic
+        if (variable.Qualifiers != null)
+        {
+            foreach (var qualifier in variable.Qualifiers)
+            {
+                if (qualifier is Semantic semantic && semantic.Name != null)
+                {
+                    return semantic.Name.Text;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static string? ExtractDefaultValue(Variable variable)
+    {
+        try
+        {
+            if (variable.InitialValue != null)
+            {
+                var valueStr = variable.InitialValue.ToString();
+                // Clean up the string representation
+                if (!string.IsNullOrWhiteSpace(valueStr))
+                    return valueStr.Trim();
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    private static IReadOnlyList<ShaderAttribute> ExtractAttributes(IEnumerable<AttributeBase>? attributes)
+    {
+        if (attributes == null) return Array.Empty<ShaderAttribute>();
+
+        var result = new List<ShaderAttribute>();
+        foreach (var attr in attributes)
+        {
+            if (attr is AttributeDeclaration attrDecl)
+            {
+                var name = attrDecl.Name?.Text ?? "unknown";
+                var parameters = attrDecl.Parameters?
+                    .Select(p => p?.ToString() ?? "")
+                    .Where(s => !string.IsNullOrEmpty(s))
+                    .ToList();
+                result.Add(new ShaderAttribute(name, parameters));
+            }
+        }
+        return result;
     }
 
     /// <summary>
@@ -1212,6 +1347,13 @@ public class ShaderVariable
         IsStream = false;
         IsCompose = false;
         Location = new SourceSpan();
+        // New properties default to empty/false
+        DefaultValue = null;
+        Attributes = Array.Empty<ShaderAttribute>();
+        IsConst = false;
+        IsStatic = false;
+        IsGroupshared = false;
+        Documentation = null;
     }
 
     public static ShaderVariable CreatePartial(string name, string typeName)
@@ -1230,19 +1372,49 @@ public class ShaderMethod
     public bool IsStage { get; }
     public SourceSpan Location { get; }
 
+    // NEW: Rich metadata
+    public IReadOnlyList<ShaderAttribute> Attributes { get; }
+    public string? Documentation { get; internal set; }  // Set by comment scanner
+
     public ShaderMethod(MethodDeclaration method)
     {
         Name = method.Name.Text;
         ReturnType = method.ReturnType?.Name?.Text ?? "void";
+
+        // Use new ShaderParameter constructor with full Parameter info
         Parameters = method.Parameters
-            .Select(p => new ShaderParameter(p.Name.Text, p.Type?.Name?.Text ?? "unknown"))
+            .Select(p => new ShaderParameter(p))
             .ToList();
+
         // Check for override/abstract in qualifiers text representation
         var qualText = method.Qualifiers.ToString();
         IsOverride = qualText.Contains("override");
         IsAbstract = qualText.Contains("abstract");
         IsStage = method.Qualifiers.Contains(StrideStorageQualifier.Stage);
         Location = method.Span;
+
+        // Extract attributes
+        Attributes = ExtractAttributes(method.Attributes);
+    }
+
+    private static IReadOnlyList<ShaderAttribute> ExtractAttributes(IEnumerable<AttributeBase>? attributes)
+    {
+        if (attributes == null) return Array.Empty<ShaderAttribute>();
+
+        var result = new List<ShaderAttribute>();
+        foreach (var attr in attributes)
+        {
+            if (attr is AttributeDeclaration attrDecl)
+            {
+                var name = attrDecl.Name?.Text ?? "unknown";
+                var parameters = attrDecl.Parameters?
+                    .Select(p => p?.ToString() ?? "")
+                    .Where(s => !string.IsNullOrEmpty(s))
+                    .ToList();
+                result.Add(new ShaderAttribute(name, parameters));
+            }
+        }
+        return result;
     }
 
     // Private constructor for partial methods
@@ -1255,6 +1427,9 @@ public class ShaderMethod
         IsAbstract = false;
         IsStage = false;
         Location = new SourceSpan();
+        // New properties default to empty
+        Attributes = Array.Empty<ShaderAttribute>();
+        Documentation = null;
     }
 
     public static ShaderMethod CreatePartial(string name, string returnType)
@@ -1263,15 +1438,118 @@ public class ShaderMethod
     }
 }
 
+/// <summary>
+/// Represents an attribute/annotation on a shader element.
+/// Examples: [Color], [Range(0, 1)], [Link("path")]
+/// </summary>
+public class ShaderAttribute
+{
+    public string Name { get; }
+    public IReadOnlyList<string> Parameters { get; }
+
+    public ShaderAttribute(string name, IReadOnlyList<string>? parameters = null)
+    {
+        Name = name;
+        Parameters = parameters ?? Array.Empty<string>();
+    }
+
+    public override string ToString()
+    {
+        if (Parameters.Count == 0)
+            return $"[{Name}]";
+        return $"[{Name}({string.Join(", ", Parameters)})]";
+    }
+}
+
+/// <summary>
+/// Direction modifier for method parameters.
+/// </summary>
+public enum ParameterDirection
+{
+    None,   // Default (in)
+    In,     // Explicitly marked as in
+    Out,    // out parameter
+    InOut   // inout parameter
+}
+
 public class ShaderParameter
 {
     public string Name { get; }
     public string TypeName { get; }
+    public ParameterDirection Direction { get; }
+    public string? SemanticBinding { get; }
+    public IReadOnlyList<ShaderAttribute> Attributes { get; }
 
     public ShaderParameter(string name, string typeName)
     {
         Name = name;
         TypeName = typeName;
+        Direction = ParameterDirection.None;
+        SemanticBinding = null;
+        Attributes = Array.Empty<ShaderAttribute>();
+    }
+
+    public ShaderParameter(Parameter param)
+    {
+        Name = param.Name?.Text ?? "unknown";
+        TypeName = param.Type?.Name?.Text ?? "unknown";
+
+        // Extract direction from qualifiers
+        Direction = ExtractDirection(param.Qualifiers);
+
+        // Extract semantic binding (e.g., ": POSITION")
+        SemanticBinding = ExtractSemantic(param);
+
+        // Extract attributes
+        Attributes = ExtractAttributes(param.Attributes);
+    }
+
+    private static ParameterDirection ExtractDirection(Qualifier? qualifiers)
+    {
+        if (qualifiers == null) return ParameterDirection.None;
+
+        var qualText = qualifiers.ToString().ToLowerInvariant();
+        if (qualText.Contains("inout")) return ParameterDirection.InOut;
+        if (qualText.Contains("out")) return ParameterDirection.Out;
+        if (qualText.Contains(" in ") || qualText.StartsWith("in ")) return ParameterDirection.In;
+
+        return ParameterDirection.None;
+    }
+
+    private static string? ExtractSemantic(Parameter param)
+    {
+        // Parameter extends Variable, so semantic is in Qualifiers
+        if (param.Qualifiers != null)
+        {
+            foreach (var qualifier in param.Qualifiers)
+            {
+                if (qualifier is Semantic semantic && semantic.Name != null)
+                {
+                    return semantic.Name.Text;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static IReadOnlyList<ShaderAttribute> ExtractAttributes(IEnumerable<AttributeBase>? attributes)
+    {
+        if (attributes == null) return Array.Empty<ShaderAttribute>();
+
+        var result = new List<ShaderAttribute>();
+        foreach (var attr in attributes)
+        {
+            if (attr is AttributeDeclaration attrDecl)
+            {
+                var name = attrDecl.Name?.Text ?? "unknown";
+                var parameters = attrDecl.Parameters?
+                    .Select(p => p?.ToString() ?? "")
+                    .Where(s => !string.IsNullOrEmpty(s))
+                    .ToList();
+                result.Add(new ShaderAttribute(name, parameters));
+            }
+        }
+        return result;
     }
 }
 

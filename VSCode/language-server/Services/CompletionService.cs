@@ -283,13 +283,35 @@ public class CompletionService
     {
         return Semantics
             .Where(s => s.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-            .Select(s => new CompletionItem
+            .Select(s =>
             {
-                Label = s,
-                Kind = CompletionItemKind.Constant,
-                Detail = "Semantic",
-                SortText = "0_" + s
+                var doc = SemanticInfo.GetDocumentation(s);
+                return new CompletionItem
+                {
+                    Label = s,
+                    Kind = CompletionItemKind.Constant,
+                    Detail = doc != null ? TruncateDoc(doc, 60) : "Semantic",
+                    Documentation = doc,
+                    LabelDetails = new CompletionItemLabelDetails
+                    {
+                        Description = s.StartsWith("SV_") ? "System Value" : "Input/Output"
+                    },
+                    SortText = s.StartsWith("SV_") ? "0_" + s : "1_" + s  // SV_ semantics first
+                };
             });
+    }
+
+    /// <summary>
+    /// Truncate documentation to a reasonable length for detail display.
+    /// </summary>
+    private static string TruncateDoc(string doc, int maxLength = 50)
+    {
+        if (doc.Length <= maxLength) return doc;
+        var truncated = doc.Substring(0, maxLength - 3);
+        var lastSpace = truncated.LastIndexOf(' ');
+        if (lastSpace > maxLength / 2)
+            truncated = truncated.Substring(0, lastSpace);
+        return truncated + "...";
     }
 
     /// <summary>
@@ -411,6 +433,7 @@ public class CompletionService
                     Detail = $"stream {variable.TypeName} ({definedIn})",
                     LabelDetails = new CompletionItemLabelDetails
                     {
+                        Detail = ": " + variable.TypeName,  // Type shown inline after name
                         Description = definedIn
                     },
                     Documentation = isLocal
@@ -426,11 +449,12 @@ public class CompletionService
     }
 
     /// <summary>
-    /// Gets completions for "varName." - struct fields, composition members, or vector swizzles.
+    /// Gets completions for "varName." or "varName.member." - struct fields, composition members, or vector swizzles.
+    /// Supports chained member access like p.Position.xy where we need to resolve each step.
     /// </summary>
     private IEnumerable<CompletionItem> GetVariableMemberCompletions(
         ParsedShader parsed,
-        string variableName,
+        string memberChain,
         string prefix,
         string content,
         Position position,
@@ -438,40 +462,232 @@ public class CompletionService
     {
         var items = new List<CompletionItem>();
 
-        // Find the variable's type
-        var variableType = FindVariableType(parsed, variableName, content, position, contextPath);
-        if (variableType == null)
+        // Split chain: "p.Position" → ["p", "Position"]
+        var parts = memberChain.Split('.');
+        if (parts.Length == 0)
+            return items;
+
+        // Find the first variable's type
+        var currentType = FindVariableType(parsed, parts[0], content, position, contextPath);
+        if (currentType == null)
         {
-            _logger.LogDebug("Could not determine type for variable '{VariableName}'", variableName);
+            _logger.LogDebug("Could not determine type for variable '{VariableName}'", parts[0]);
             return items;
         }
 
-        _logger.LogDebug("Variable '{VariableName}' has type '{Type}'", variableName, variableType);
+        _logger.LogDebug("Variable '{VariableName}' has type '{Type}'", parts[0], currentType);
 
-        // Check if it's a struct type - show struct fields
-        if (_workspace.IsStructType(variableType, contextPath))
+        // Walk the chain, resolving each member's type
+        for (int i = 1; i < parts.Length; i++)
         {
-            items.AddRange(GetStructFieldCompletions(variableType, prefix, contextPath));
-            return items;
+            var memberName = parts[i];
+            var nextType = ResolveMemberType(currentType, memberName, contextPath);
+            if (nextType == null)
+            {
+                _logger.LogDebug("Could not resolve member '{Member}' on type '{Type}'", memberName, currentType);
+                return items;
+            }
+            _logger.LogDebug("Member '{Member}' on '{Type}' has type '{NextType}'", memberName, currentType, nextType);
+            currentType = nextType;
+        }
+
+        // Generate completions for the final type
+        return GetCompletionsForType(currentType, prefix, contextPath);
+    }
+
+    /// <summary>
+    /// Resolve the type of accessing a member on a given type.
+    /// Handles struct fields, vector/matrix swizzles, and shader members.
+    /// </summary>
+    private string? ResolveMemberType(string baseType, string memberName, string? contextPath)
+    {
+        // Check if it's a struct type - look up field type
+        var structDef = _workspace.GetStruct(baseType, contextPath);
+        if (structDef != null)
+        {
+            var field = structDef.Fields.FirstOrDefault(f =>
+                string.Equals(f.Name, memberName, StringComparison.OrdinalIgnoreCase));
+            return field?.TypeName;
+        }
+
+        // Check if it's a vector/matrix type - resolve swizzle
+        var typeInfo = HlslTypeSystem.GetTypeInfo(baseType);
+        if (typeInfo != null && (typeInfo.IsVector || typeInfo.IsMatrix))
+        {
+            return ResolveSwizzleType(typeInfo, memberName);
+        }
+
+        // Check if it's a scalar type - scalars can also be swizzled (e.g., f.xx)
+        if (typeInfo != null && typeInfo.IsScalar)
+        {
+            return ResolveScalarSwizzleType(baseType, memberName);
+        }
+
+        // Check if it's a shader/composition type - look up variable type
+        var shaderForType = _workspace.GetParsedShaderClosest(baseType, contextPath);
+        if (shaderForType != null)
+        {
+            foreach (var (variable, _) in _inheritanceResolver.GetAllVariables(shaderForType, contextPath))
+            {
+                if (string.Equals(variable.Name, memberName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return variable.TypeName;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Resolve the resulting type of a vector/matrix swizzle operation.
+    /// </summary>
+    private string? ResolveSwizzleType(HlslTypeSystem.TypeInfo typeInfo, string swizzle)
+    {
+        if (string.IsNullOrEmpty(swizzle))
+            return null;
+
+        // Validate swizzle components
+        var maxComponents = typeInfo.IsMatrix ? Math.Max(typeInfo.Rows, typeInfo.Cols) : typeInfo.Rows;
+        if (!IsValidSwizzle(swizzle, maxComponents))
+            return null;
+
+        var scalarType = typeInfo.GetScalarTypeName();
+
+        // Single component returns scalar
+        if (swizzle.Length == 1)
+            return scalarType;
+
+        // Multiple components return vector
+        return $"{scalarType}{swizzle.Length}";
+    }
+
+    /// <summary>
+    /// Resolve the type of swizzling a scalar (e.g., f.xx returns float2).
+    /// </summary>
+    private string? ResolveScalarSwizzleType(string scalarType, string swizzle)
+    {
+        if (string.IsNullOrEmpty(swizzle))
+            return null;
+
+        // Scalars can only use 'x' or 'r' for swizzle
+        if (!swizzle.All(c => c == 'x' || c == 'r'))
+            return null;
+
+        if (swizzle.Length > 4)
+            return null;
+
+        if (swizzle.Length == 1)
+            return scalarType;
+
+        return $"{scalarType}{swizzle.Length}";
+    }
+
+    /// <summary>
+    /// Check if a swizzle string is valid for the given component count.
+    /// </summary>
+    private bool IsValidSwizzle(string swizzle, int maxComponents)
+    {
+        if (string.IsNullOrEmpty(swizzle) || swizzle.Length > 4)
+            return false;
+
+        var validXyzw = new[] { 'x', 'y', 'z', 'w' }.Take(maxComponents).ToHashSet();
+        var validRgba = new[] { 'r', 'g', 'b', 'a' }.Take(maxComponents).ToHashSet();
+        var validStuv = new[] { 's', 't', 'u', 'v' }.Take(maxComponents).ToHashSet();
+
+        // All characters must be from one set (can't mix xyzw with rgba)
+        return swizzle.All(c => validXyzw.Contains(c)) ||
+               swizzle.All(c => validRgba.Contains(c)) ||
+               swizzle.All(c => validStuv.Contains(c));
+    }
+
+    /// <summary>
+    /// Generate completions for a given type (struct fields, swizzles, or shader members).
+    /// </summary>
+    private IEnumerable<CompletionItem> GetCompletionsForType(string typeName, string prefix, string? contextPath)
+    {
+        // Check if it's a struct type - show struct fields
+        if (_workspace.IsStructType(typeName, contextPath))
+        {
+            return GetStructFieldCompletions(typeName, prefix, contextPath);
         }
 
         // Check if it's a shader/composition type - show shader members
-        var shaderForType = _workspace.GetParsedShaderClosest(variableType, contextPath);
+        var shaderForType = _workspace.GetParsedShaderClosest(typeName, contextPath);
         if (shaderForType != null)
         {
-            items.AddRange(GetCompositionMemberCompletions(shaderForType, prefix, contextPath));
-            return items;
+            return GetCompositionMemberCompletions(shaderForType, prefix, contextPath);
         }
 
         // Check if it's a vector/matrix type - show swizzle components
-        var typeInfo = HlslTypeSystem.GetTypeInfo(variableType);
+        var typeInfo = HlslTypeSystem.GetTypeInfo(typeName);
         if (typeInfo != null && (typeInfo.IsVector || typeInfo.IsMatrix))
         {
-            items.AddRange(GetSwizzleCompletions(typeInfo, prefix));
-            return items;
+            return GetSwizzleCompletions(typeInfo, prefix);
         }
 
+        // Check if it's a scalar type - scalars can be swizzled too
+        if (typeInfo != null && typeInfo.IsScalar)
+        {
+            return GetScalarSwizzleCompletions(typeInfo, prefix);
+        }
+
+        return Enumerable.Empty<CompletionItem>();
+    }
+
+    /// <summary>
+    /// Gets swizzle completions for scalar types (can repeat: f.xx, f.xxx, f.xxxx).
+    /// </summary>
+    private IEnumerable<CompletionItem> GetScalarSwizzleCompletions(HlslTypeSystem.TypeInfo typeInfo, string prefix)
+    {
+        var items = new List<CompletionItem>();
+        var scalarType = typeInfo.GetScalarTypeName();
+
+        // Single component x or r
+        if ("x".StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            items.Add(new CompletionItem
+            {
+                Label = "x",
+                Kind = CompletionItemKind.Field,
+                Detail = scalarType,
+                Documentation = "Scalar as single component",
+                SortText = "0_00_x"
+            });
+        }
+        if ("r".StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            items.Add(new CompletionItem
+            {
+                Label = "r",
+                Kind = CompletionItemKind.Field,
+                Detail = scalarType,
+                Documentation = "Scalar as single component",
+                SortText = "0_01_r"
+            });
+        }
+
+        // Common repeated swizzles (xx, xxx, xxxx)
+        AddSwizzle(items, "xx", $"{scalarType}2", prefix, 10);
+        AddSwizzle(items, "xxx", $"{scalarType}3", prefix, 11);
+        AddSwizzle(items, "xxxx", $"{scalarType}4", prefix, 12);
+
         return items;
+    }
+
+    private void AddSwizzle(List<CompletionItem> items, string swizzle, string resultType, string prefix, int sortIndex)
+    {
+        if (swizzle.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            items.Add(new CompletionItem
+            {
+                Label = swizzle,
+                Kind = CompletionItemKind.Field,
+                Detail = resultType,
+                Documentation = "Swizzle operator",
+                SortText = $"1_{sortIndex:D2}_{swizzle}"
+            });
+        }
     }
 
     /// <summary>
@@ -556,13 +772,21 @@ public class CompletionService
 
         return fields
             .Where(f => f.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-            .Select((f, index) => new CompletionItem
+            .Select((f, index) =>
             {
-                Label = f.Name,
-                Kind = CompletionItemKind.Field,
-                Detail = f.TypeName + (f.IsArray ? "[]" : ""),
-                Documentation = $"Field of struct {structTypeName}",
-                SortText = $"0_{index:D2}_{f.Name}"  // Keep original order from struct definition
+                var typeDisplay = f.TypeName + (f.IsArray ? "[]" : "");
+                return new CompletionItem
+                {
+                    Label = f.Name,
+                    Kind = CompletionItemKind.Field,
+                    Detail = typeDisplay,
+                    LabelDetails = new CompletionItemLabelDetails
+                    {
+                        Detail = ": " + typeDisplay  // Shows inline after field name
+                    },
+                    Documentation = $"Field of struct {structTypeName}",
+                    SortText = $"0_{index:D2}_{f.Name}"  // Keep original order from struct definition
+                };
             });
     }
 
@@ -625,6 +849,7 @@ public class CompletionService
                     Detail = detail,
                     LabelDetails = new CompletionItemLabelDetails
                     {
+                        Detail = ": " + variable.TypeName,  // Type shown inline after name
                         Description = definedIn
                     },
                     Documentation = $"Variable from {definedIn}",
@@ -781,7 +1006,11 @@ public class CompletionService
                     Label = variable.Name,
                     Kind = CompletionItemKind.Field,
                     Detail = detail,
-                    LabelDetails = isInherited ? new CompletionItemLabelDetails { Description = definedIn } : null,
+                    LabelDetails = new CompletionItemLabelDetails
+                    {
+                        Detail = ": " + variable.TypeName,  // Type shown inline after name
+                        Description = isInherited ? definedIn : null
+                    },
                     Documentation = isInherited ? $"Inherited from {definedIn}" : $"Defined in {parsed.Name}",
                     // Local = 0_, Inherited = 1_
                     SortText = (isInherited ? "1_" : "0_") + variable.Name
@@ -841,19 +1070,29 @@ public class CompletionService
         if (beforeCursor.Contains("compose") && !beforeCursor.Contains("="))
             return new CompletionContext(CompletionContextType.AfterCompose);
 
-        // Check for semantic context (parameter : SEMANTIC)
-        if (System.Text.RegularExpressions.Regex.IsMatch(beforeCursor, @"\)\s*:\s*\w*$"))
+        // Check for semantic context - multiple patterns:
+        // 1. After function param closing paren: "float4 pos) : SV_"
+        // 2. After variable/field declaration: "float4 position : POS"
+        // 3. After struct field: "float4 pos : "
+        var semanticPatterns = new[]
+        {
+            @"\)\s*:\s*\w*$",              // After closing paren (function return/param)
+            @"\w+\s+\w+\s*:\s*\w*$",       // After "type name :" pattern (field/variable)
+        };
+        if (semanticPatterns.Any(p => System.Text.RegularExpressions.Regex.IsMatch(beforeCursor, p)))
             return new CompletionContext(CompletionContextType.Semantic);
 
-        // Check for variable member access (varName.) - captures the variable name
-        var varDotMatch = System.Text.RegularExpressions.Regex.Match(beforeCursor, @"\b(\w+)\.\w*$");
+        // Check for variable member access (varName. or varName.member.) - captures the full chain
+        // Pattern: captures "p" from "p." OR "p.Position" from "p.Position."
+        var varDotMatch = System.Text.RegularExpressions.Regex.Match(beforeCursor, @"\b(\w+(?:\.\w+)*)\.\w*$");
         if (varDotMatch.Success)
         {
-            var varName = varDotMatch.Groups[1].Value;
+            var memberChain = varDotMatch.Groups[1].Value;
+            var firstPart = memberChain.Split('.')[0];
             // Exclude keywords that have their own handling (base, streams) and common non-variable contexts
-            if (varName != "base" && varName != "streams" && varName != "this")
+            if (firstPart != "base" && firstPart != "streams" && firstPart != "this")
             {
-                return new CompletionContext(CompletionContextType.AfterVariable, varName);
+                return new CompletionContext(CompletionContextType.AfterVariable, memberChain);
             }
         }
 

@@ -33,7 +33,8 @@ public record MemberInfo(
     bool IsLocal,
     string SourceShader,  // Which shader this member comes from
     bool IsStage,  // Whether this member has the 'stage' qualifier
-    bool IsEntryPoint  // Whether this method is a shader stage entry point (VSMain, PSMain, etc.)
+    bool IsEntryPoint,  // Whether this method is a shader stage entry point (VSMain, PSMain, etc.)
+    string? Semantic = null  // Semantic binding (e.g., "POSITION", "SV_Target") if applicable
 );
 
 public record MemberGroup(

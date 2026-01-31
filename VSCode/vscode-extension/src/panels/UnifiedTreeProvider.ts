@@ -22,6 +22,7 @@ export interface MemberInfo {
     sourceShader: string;
     isStage: boolean;
     isEntryPoint: boolean;
+    semantic: string | null;  // Semantic binding (e.g., "POSITION", "SV_Target")
 }
 
 export interface MemberGroup {
@@ -198,7 +199,6 @@ export class UnifiedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
         );
         item.id = nodeId;
         item.iconPath = new vscode.ThemeIcon('symbol-class');
-        item.description = 'current shader';
         item.contextValue = 'currentShader';
         return item;
     }
@@ -304,39 +304,42 @@ export class UnifiedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     private createMemberItem(element: MemberNode): vscode.TreeItem {
         const member = element.member;
 
-        // Build the label with stage prefix
-        const stagePrefix = member.isStage ? 'stage ' : '';
+        // Build the label (stage indicated by color, not text prefix)
         let label: string;
 
         if (element.category === 'methods') {
-            label = `${stagePrefix}${member.type} ${member.name}${member.signature || '()'}`;
+            label = `${member.type} ${member.name}${member.signature || '()'}`;
         } else if (element.category === 'streams') {
-            label = `${stagePrefix}${member.type} ${member.name}`;
+            label = `${member.type} ${member.name}`;
         } else {
-            label = `${stagePrefix}${member.type} ${member.name}`;
+            label = `${member.type} ${member.name}`;
         }
 
         const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
 
-        // Description: only show source shader for inherited members (local members show nothing)
-        if (member.isLocal) {
-            // No description for local members - they're in the current shader
-            if (member.isEntryPoint) {
-                const stageName = this.getShaderStageName(member.name);
-                item.description = stageName;
-            }
-            // else: no description
-        } else {
-            // Inherited members show source shader
-            if (member.isEntryPoint) {
-                const stageName = this.getShaderStageName(member.name);
-                item.description = `${member.sourceShader} • ${stageName}`;
-            } else {
-                item.description = member.sourceShader;
-            }
+        // Description: show semantic, entry point stage, and source shader for inherited
+        const descParts: string[] = [];
+
+        // Add semantic binding if present (e.g., ": POSITION" or ": SV_Target")
+        if (member.semantic) {
+            descParts.push(`: ${member.semantic}`);
         }
 
+        // Add entry point stage name
+        if (member.isEntryPoint) {
+            const stageName = this.getShaderStageName(member.name);
+            descParts.push(stageName);
+        }
+
+        // Add source shader for inherited members
+        if (!member.isLocal) {
+            descParts.push(member.sourceShader);
+        }
+
+        item.description = descParts.length > 0 ? descParts.join(' • ') : undefined;
+
         // Icon based on local vs inherited, special icon for entry points
+        // Color coding: entry points (green), semantics (cyan), stage (purple)
         if (member.isEntryPoint) {
             // Use play icon for entry points
             item.iconPath = new vscode.ThemeIcon('play', new vscode.ThemeColor('charts.green'));
@@ -352,7 +355,17 @@ export class UnifiedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
                 'symbol-field',
                 'symbol-constant',
             ];
-            item.iconPath = new vscode.ThemeIcon(member.isLocal ? localIcon : inheritedIcon);
+            const baseIcon = member.isLocal ? localIcon : inheritedIcon;
+
+            // Visual signals (orthogonal):
+            // - Icon: plug for semantic bindings, category icon otherwise
+            // - Color: blue for stage, cyan for non-stage (terminal colors always defined)
+            const hasSemantic = member.semantic && (element.category === 'streams' || element.category === 'variables');
+            const icon = hasSemantic ? 'plug' : baseIcon;
+            const color = member.isStage
+                ? new vscode.ThemeColor('terminal.ansiBlue')    // blue for stage
+                : new vscode.ThemeColor('terminal.ansiCyan');   // cyan for non-stage
+            item.iconPath = new vscode.ThemeIcon(icon, color);
         }
 
         // Build tooltip
@@ -366,6 +379,10 @@ export class UnifiedTreeProvider implements vscode.TreeDataProvider<TreeNode> {
             if (member.isEntryPoint) {
                 const stageName = this.getShaderStageName(member.name);
                 item.tooltip.appendMarkdown(`\n\n**Shader Stage Entry Point** (${stageName})`);
+            }
+            // Show semantics used by this method
+            if (member.semantic) {
+                item.tooltip.appendMarkdown(`\n\n**Semantics:** ${member.semantic}`);
             }
         } else if (element.category === 'streams') {
             item.tooltip.appendCodeblock(

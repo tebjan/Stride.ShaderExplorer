@@ -669,16 +669,41 @@ public class HoverHandler : HoverHandlerBase
     {
         var sb = new System.Text.StringBuilder();
 
+        // Build qualifier string
         var qualifiers = new List<string>();
+        if (variable.IsStatic) qualifiers.Add("static");
+        if (variable.IsConst) qualifiers.Add("const");
+        if (variable.IsGroupshared) qualifiers.Add("groupshared");
         if (variable.IsStage) qualifiers.Add("stage");
         if (variable.IsStream) qualifiers.Add("stream");
         if (variable.IsCompose) qualifiers.Add("compose");
 
         var qualifierStr = qualifiers.Any() ? string.Join(" ", qualifiers) + " " : "";
 
+        // Build declaration with optional default value
         sb.AppendLine("```sdsl");
-        sb.AppendLine($"{qualifierStr}{variable.TypeName} {variable.Name}");
+        if (!string.IsNullOrEmpty(variable.DefaultValue))
+        {
+            sb.AppendLine($"{qualifierStr}{variable.TypeName} {variable.Name} = {variable.DefaultValue}");
+        }
+        else
+        {
+            sb.AppendLine($"{qualifierStr}{variable.TypeName} {variable.Name}");
+        }
         sb.AppendLine("```");
+
+        // Show attributes if present
+        if (variable.Attributes.Count > 0)
+        {
+            sb.AppendLine();
+            foreach (var attr in variable.Attributes)
+            {
+                var attrIcon = GetAttributeIcon(attr.Name);
+                sb.AppendLine($"{attrIcon} `{attr}` {GetAttributeDescription(attr)}");
+            }
+        }
+
+        // Source shader info
         sb.AppendLine();
         if (isInherited)
         {
@@ -693,7 +718,52 @@ public class HoverHandler : HoverHandlerBase
             sb.AppendLine($"*Defined in* **{shaderName}**");
         }
 
+        // Documentation if present
+        if (!string.IsNullOrEmpty(variable.Documentation))
+        {
+            sb.AppendLine();
+            sb.AppendLine("---");
+            sb.AppendLine(variable.Documentation);
+        }
+
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Get an emoji icon for a known attribute.
+    /// </summary>
+    private static string GetAttributeIcon(string attributeName)
+    {
+        return attributeName.ToLowerInvariant() switch
+        {
+            "color" => "\ud83c\udfa8",      // Palette emoji
+            "range" => "\ud83d\udccf",      // Ruler emoji
+            "link" => "\ud83d\udd17",       // Link emoji
+            "entrypoint" => "\u25b6\ufe0f", // Play button
+            "map" => "\ud83d\uddfa\ufe0f",  // Map emoji
+            _ => "\ud83d\udccc"             // Pushpin for unknown
+        };
+    }
+
+    /// <summary>
+    /// Get a human-readable description for known attributes.
+    /// </summary>
+    private static string GetAttributeDescription(ShaderAttribute attr)
+    {
+        return attr.Name.ToLowerInvariant() switch
+        {
+            "color" => "Color picker variable",
+            "range" when attr.Parameters.Count >= 2 =>
+                $"Valid range: {attr.Parameters[0]} - {attr.Parameters[1]}",
+            "range" => "Constrained range",
+            "link" when attr.Parameters.Count > 0 =>
+                $"Linked to `{attr.Parameters[0]}`",
+            "link" => "Linked property",
+            "entrypoint" => "Shader entry point",
+            "map" when attr.Parameters.Count > 0 =>
+                $"Mapped to `{attr.Parameters[0]}`",
+            _ => ""
+        };
     }
 
     private static string BuildSwizzleHoverContent(string target, string targetType, string swizzle, string resultType)
@@ -797,12 +867,32 @@ public class HoverHandler : HoverHandlerBase
         if (firstMethod.IsStage) qualifiers.Add("stage");
         var qualifierStr = qualifiers.Any() ? string.Join(" ", qualifiers) + " " : "";
 
-        var parameters = string.Join(", ", firstMethod.Parameters.Select(p => $"{p.TypeName} {p.Name}"));
+        var parameters = string.Join(", ", firstMethod.Parameters.Select(FormatParameter));
 
         // Show code block with the method signature
         sb.AppendLine("```sdsl");
         sb.AppendLine($"{qualifierStr}{firstMethod.ReturnType} {firstMethod.Name}({parameters})");
         sb.AppendLine("```");
+
+        // Show attributes for the most derived method
+        if (firstMethod.Attributes.Count > 0)
+        {
+            sb.AppendLine();
+            foreach (var attr in firstMethod.Attributes)
+            {
+                var attrIcon = GetAttributeIcon(attr.Name);
+                sb.AppendLine($"{attrIcon} `{attr}` {GetAttributeDescription(attr)}");
+            }
+        }
+
+        // Show semantic documentation for parameters
+        var semanticDocs = GetParameterSemanticDocs(firstMethod.Parameters);
+        if (!string.IsNullOrEmpty(semanticDocs))
+        {
+            sb.AppendLine();
+            sb.Append(semanticDocs);
+        }
+
         sb.AppendLine();
 
         // Show override chain more clearly
@@ -813,7 +903,7 @@ public class HoverHandler : HoverHandlerBase
         {
             var (method, definedIn) = allMethods[i];
             var isLocal = definedIn == currentShaderName;
-            var prefix = isLocal ? "→ " : "  ";
+            var prefix = isLocal ? "\u2192 " : "  ";  // → arrow
             var suffix = isLocal ? " *(this shader)*" : "";
 
             // Show override/base relationship
@@ -823,8 +913,16 @@ public class HoverHandler : HoverHandlerBase
             }
             else
             {
-                sb.AppendLine($"{prefix}↳ {definedIn}{suffix}");
+                sb.AppendLine($"{prefix}\u21b3 {definedIn}{suffix}");  // ↳ arrow
             }
+        }
+
+        // Documentation from most derived method
+        if (!string.IsNullOrEmpty(firstMethod.Documentation))
+        {
+            sb.AppendLine();
+            sb.AppendLine("---");
+            sb.AppendLine(firstMethod.Documentation);
         }
 
         return sb.ToString();
@@ -840,11 +938,31 @@ public class HoverHandler : HoverHandlerBase
         if (method.IsStage) qualifiers.Add("stage");
 
         var qualifierStr = qualifiers.Any() ? string.Join(" ", qualifiers) + " " : "";
-        var parameters = string.Join(", ", method.Parameters.Select(p => $"{p.TypeName} {p.Name}"));
+        var parameters = string.Join(", ", method.Parameters.Select(FormatParameter));
 
         sb.AppendLine("```sdsl");
         sb.AppendLine($"{qualifierStr}{method.ReturnType} {method.Name}({parameters})");
         sb.AppendLine("```");
+
+        // Show attributes if present
+        if (method.Attributes.Count > 0)
+        {
+            sb.AppendLine();
+            foreach (var attr in method.Attributes)
+            {
+                var attrIcon = GetAttributeIcon(attr.Name);
+                sb.AppendLine($"{attrIcon} `{attr}` {GetAttributeDescription(attr)}");
+            }
+        }
+
+        // Show semantic documentation for parameters
+        var semanticDocs = GetParameterSemanticDocs(method.Parameters);
+        if (!string.IsNullOrEmpty(semanticDocs))
+        {
+            sb.AppendLine();
+            sb.Append(semanticDocs);
+        }
+
         sb.AppendLine();
         if (isInherited)
         {
@@ -855,7 +973,68 @@ public class HoverHandler : HoverHandlerBase
             sb.AppendLine("*Defined in this shader*");
         }
 
+        // Documentation if present
+        if (!string.IsNullOrEmpty(method.Documentation))
+        {
+            sb.AppendLine();
+            sb.AppendLine("---");
+            sb.AppendLine(method.Documentation);
+        }
+
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Get formatted semantic documentation for method parameters.
+    /// </summary>
+    private static string? GetParameterSemanticDocs(IReadOnlyList<ShaderParameter> parameters)
+    {
+        var sb = new System.Text.StringBuilder();
+
+        foreach (var param in parameters)
+        {
+            if (!string.IsNullOrEmpty(param.SemanticBinding))
+            {
+                var doc = SemanticInfo.GetDocumentation(param.SemanticBinding);
+                if (doc != null)
+                {
+                    sb.AppendLine($"**{param.SemanticBinding}**: {doc}");
+                }
+                else
+                {
+                    // Unknown semantic - still show it but note it's unknown
+                    sb.AppendLine($"**{param.SemanticBinding}**: *(unknown semantic)*");
+                }
+            }
+        }
+
+        return sb.Length > 0 ? sb.ToString().TrimEnd() : null;
+    }
+
+    /// <summary>
+    /// Format a parameter with direction modifier if present.
+    /// </summary>
+    private static string FormatParameter(ShaderParameter param)
+    {
+        var parts = new List<string>();
+
+        // Add direction modifier if not None
+        if (param.Direction != ParameterDirection.None)
+        {
+            parts.Add(param.Direction.ToString().ToLowerInvariant());
+        }
+
+        parts.Add(param.TypeName);
+        parts.Add(param.Name);
+
+        // Add semantic binding if present
+        var result = string.Join(" ", parts);
+        if (!string.IsNullOrEmpty(param.SemanticBinding))
+        {
+            result += $" : {param.SemanticBinding}";
+        }
+
+        return result;
     }
 
     /// <summary>
@@ -868,13 +1047,7 @@ public class HoverHandler : HoverHandlerBase
     {
         var sb = new System.Text.StringBuilder();
 
-        var qualifiers = new List<string>();
-        if (method.IsOverride) qualifiers.Add("override");
-        if (method.IsAbstract) qualifiers.Add("abstract");
-        if (method.IsStage) qualifiers.Add("stage");
-
-        var qualifierStr = qualifiers.Any() ? string.Join(" ", qualifiers) + " " : "";
-        var parameters = string.Join(", ", method.Parameters.Select(p => $"{p.TypeName} {p.Name}"));
+        var parameters = string.Join(", ", method.Parameters.Select(FormatParameter));
 
         sb.AppendLine("```sdsl");
         sb.AppendLine($"base.{method.Name}({parameters})");
@@ -895,6 +1068,14 @@ public class HoverHandler : HoverHandlerBase
             {
                 sb.AppendLine($"- *...and {allBaseMethods.Count - 4} more*");
             }
+        }
+
+        // Documentation if present
+        if (!string.IsNullOrEmpty(method.Documentation))
+        {
+            sb.AppendLine();
+            sb.AppendLine("---");
+            sb.AppendLine(method.Documentation);
         }
 
         return sb.ToString();
