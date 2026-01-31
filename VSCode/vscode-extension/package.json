@@ -3,7 +3,7 @@
   "displayName": "Stride SDSL Shader Tools",
   "description": "IntelliSense, (future) debugging, and assistance for Stride and vvvv SDSL shaders",
   "icon": "icons/icon.png",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "publisher": "tebjan",
   "engines": {
     "vscode": "^1.95.0"
