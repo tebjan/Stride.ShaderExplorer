@@ -461,6 +461,7 @@ async function startLanguageServer(context: vscode.ExtensionContext): Promise<vo
 
     // Get additional shader paths from config
     const additionalPaths = config.get<string[]>('shaderPaths') || [];
+    const vvvvInstallationsFolder = config.get<string>('vvvvInstallationsFolder') || '';
     const diagnosticsDelay = config.get<number>('diagnostics.delay') || 2000;
 
     // Client options with middleware to enhance hover with clickable links
@@ -474,6 +475,7 @@ async function startLanguageServer(context: vscode.ExtensionContext): Promise<vo
         },
         initializationOptions: {
             additionalShaderPaths: additionalPaths,
+            vvvvInstallationsFolder: vvvvInstallationsFolder,
             workspaceFolders: vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath) || [],
             diagnosticsDelayMs: diagnosticsDelay,
         },

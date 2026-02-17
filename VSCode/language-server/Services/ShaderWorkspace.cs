@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Win32;
 
 namespace StrideShaderLanguageServer.Services;
 
@@ -1062,28 +1063,75 @@ public class ShaderWorkspace
         }
     }
 
+    private string? _vvvvInstallationsFolder;
+
+    /// <summary>
+    /// Sets a custom vvvv installations folder (overrides the default Program Files location).
+    /// </summary>
+    public void SetVvvvInstallationsFolder(string folder)
+    {
+        if (!string.IsNullOrWhiteSpace(folder))
+        {
+            _vvvvInstallationsFolder = folder;
+            _logger.LogInformation("Custom vvvv installations folder set: {Path}", folder);
+        }
+    }
+
     private List<string> DiscoverVvvvPaths()
     {
         var paths = new List<string>();
 
-        var vvvvBaseDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "vvvv");
+        // Collect all candidate vvvv_gamma directories from multiple sources
+        var candidateDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        _logger.LogInformation("Looking for vvvv at: {Path}", vvvvBaseDir);
-
-        if (!Directory.Exists(vvvvBaseDir))
+        // Source 1: Windows registry (Inno Setup uninstall entries)
+        try
         {
-            _logger.LogInformation("vvvv base directory not found");
+            DiscoverVvvvFromRegistry(candidateDirs);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error reading vvvv installations from registry");
+        }
+
+        // Source 2: Custom installations folder (user setting)
+        if (!string.IsNullOrWhiteSpace(_vvvvInstallationsFolder) && Directory.Exists(_vvvvInstallationsFolder))
+        {
+            _logger.LogInformation("Scanning custom vvvv folder: {Path}", _vvvvInstallationsFolder);
+            foreach (var dir in Directory.GetDirectories(_vvvvInstallationsFolder))
+            {
+                if (Path.GetFileName(dir).StartsWith("vvvv_gamma_", StringComparison.OrdinalIgnoreCase))
+                    candidateDirs.Add(dir);
+            }
+        }
+
+        // Source 3: Default Program Files location
+        var defaultBaseDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "vvvv");
+        if (Directory.Exists(defaultBaseDir))
+        {
+            foreach (var dir in Directory.GetDirectories(defaultBaseDir))
+            {
+                if (Path.GetFileName(dir).StartsWith("vvvv_gamma_", StringComparison.OrdinalIgnoreCase))
+                    candidateDirs.Add(dir);
+            }
+        }
+
+        _logger.LogInformation("Found {Count} candidate vvvv installation directories", candidateDirs.Count);
+
+        if (candidateDirs.Count == 0)
+        {
+            _logger.LogInformation("No vvvv gamma installations found");
             return paths;
         }
 
         try
         {
-            // Get all vvvv_gamma_* directories and parse their versions
-            var gammaInstalls = Directory.GetDirectories(vvvvBaseDir)
-                .Where(d => Path.GetFileName(d).StartsWith("vvvv_gamma_", StringComparison.OrdinalIgnoreCase))
+            // Parse versions and pick the latest
+            var gammaInstalls = candidateDirs
+                .Where(Directory.Exists)
                 .Select(d => new { Path = d, Version = ParseVvvvVersion(Path.GetFileName(d)) })
-                .Where(v => v.Version != null)  // Filter out unparseable/special versions
+                .Where(v => v.Version != null)
                 .ToList();
 
             if (gammaInstalls.Count == 0)
@@ -1158,6 +1206,37 @@ public class ShaderWorkspace
         }
 
         return paths;
+    }
+
+    /// <summary>
+    /// Discovers vvvv gamma installations from the Windows registry (Inno Setup uninstall entries).
+    /// Each installation registers under HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\vvvv_gamma_*_is1
+    /// with an InstallLocation value pointing to the installation directory.
+    /// </summary>
+    private void DiscoverVvvvFromRegistry(HashSet<string> candidateDirs)
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        const string uninstallKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
+
+        using var key = Registry.LocalMachine.OpenSubKey(uninstallKey);
+        if (key == null)
+            return;
+
+        foreach (var subKeyName in key.GetSubKeyNames())
+        {
+            if (!subKeyName.StartsWith("vvvv_gamma_", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            using var subKey = key.OpenSubKey(subKeyName);
+            var installLocation = subKey?.GetValue("InstallLocation") as string;
+            if (!string.IsNullOrWhiteSpace(installLocation) && Directory.Exists(installLocation))
+            {
+                candidateDirs.Add(installLocation.TrimEnd('\\', '/'));
+                _logger.LogInformation("Found vvvv from registry: {Path}", installLocation);
+            }
+        }
     }
 
     /// <summary>

@@ -75,6 +75,16 @@ class Program
                             _logger?.LogInformation("Diagnostics delay set to {DelayMs}ms", delayMs);
                         }
 
+                        // Set custom vvvv installations folder
+                        if (initOptions.TryGetValue("vvvvInstallationsFolder", out var vvvvFolderToken))
+                        {
+                            var vvvvFolder = vvvvFolderToken.Value<string>();
+                            if (!string.IsNullOrWhiteSpace(vvvvFolder))
+                            {
+                                _workspace.SetVvvvInstallationsFolder(vvvvFolder);
+                            }
+                        }
+
                         // Add user-configured additional shader paths
                         if (initOptions.TryGetValue("additionalShaderPaths", out var pathsToken))
                         {

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using Microsoft.Win32;
 
 namespace StrideShaderExplorer
 {
@@ -22,13 +23,47 @@ namespace StrideShaderExplorer
             VvvvBaseDir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "vvvv");
 
+            // Collect candidate directories from filesystem and registry
+            var candidateDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            // Source 1: Default Program Files location
             if (Directory.Exists(VvvvBaseDir))
             {
-                LatestGammaDir = Directory.GetDirectories(VvvvBaseDir)
-                    .Where(d => Path.GetFileName(d).StartsWith("vvvv_gamma_", StringComparison.OrdinalIgnoreCase))
-                    .OrderByDescending(d => d)
-                    .FirstOrDefault();
+                foreach (var dir in Directory.GetDirectories(VvvvBaseDir))
+                {
+                    if (Path.GetFileName(dir).StartsWith("vvvv_gamma_", StringComparison.OrdinalIgnoreCase))
+                        candidateDirs.Add(dir);
+                }
             }
+
+            // Source 2: Windows registry (Inno Setup uninstall entries)
+            try
+            {
+                const string uninstallKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
+                using var key = Registry.LocalMachine.OpenSubKey(uninstallKey);
+                if (key != null)
+                {
+                    foreach (var subKeyName in key.GetSubKeyNames())
+                    {
+                        if (!subKeyName.StartsWith("vvvv_gamma_", StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        using var subKey = key.OpenSubKey(subKeyName);
+                        var installLocation = subKey?.GetValue("InstallLocation") as string;
+                        if (!string.IsNullOrWhiteSpace(installLocation) && Directory.Exists(installLocation))
+                            candidateDirs.Add(installLocation.TrimEnd('\\', '/'));
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore registry access errors
+            }
+
+            LatestGammaDir = candidateDirs
+                .Where(Directory.Exists)
+                .OrderByDescending(d => d)
+                .FirstOrDefault();
         }
 
         /// <summary>
