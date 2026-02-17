@@ -74,6 +74,24 @@ class Program
                             _textDocumentSyncHandler.SetDiagnosticsDelay(delayMs);
                             _logger?.LogInformation("Diagnostics delay set to {DelayMs}ms", delayMs);
                         }
+
+                        // Add user-configured additional shader paths
+                        if (initOptions.TryGetValue("additionalShaderPaths", out var pathsToken))
+                        {
+                            var additionalPaths = pathsToken.ToObject<List<string>>() ?? [];
+                            foreach (var path in additionalPaths)
+                            {
+                                if (Directory.Exists(path))
+                                {
+                                    _workspace.AddShaderSearchPath(path, Services.ShaderSource.Workspace);
+                                    _logger?.LogInformation("Added additional shader path from settings: {Path}", path);
+                                }
+                                else
+                                {
+                                    _logger?.LogWarning("Additional shader path does not exist: {Path}", path);
+                                }
+                            }
+                        }
                     }
 
                     // Auto-discover shader paths

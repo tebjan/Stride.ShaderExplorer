@@ -92,7 +92,7 @@ public class ShaderWorkspace
         _logger.LogInformation("Discovered {Count} total shader search paths", _shaderSearchPaths.Count);
     }
 
-    private void AddShaderSearchPath(string path, ShaderSource source)
+    public void AddShaderSearchPath(string path, ShaderSource source)
     {
         lock (_lock)
         {

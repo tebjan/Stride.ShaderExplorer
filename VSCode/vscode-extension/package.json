@@ -3,7 +3,7 @@
   "displayName": "Stride SDSL Shader Tools",
   "description": "IntelliSense, (future) debugging, and assistance for Stride and vvvv SDSL shaders",
   "icon": "icons/icon.png",
-  "version": "0.6.0",
+  "version": "0.7.1",
   "publisher": "tebjan",
   "engines": {
     "vscode": "^1.95.0"
@@ -147,6 +147,90 @@
         "command": "strideShaderTools.renameShaderInFile",
         "title": "Stride Shaders: Rename Shader Declaration"
       }
+    ],
+    "debuggers": [
+      {
+        "type": "sdsl-shader",
+        "label": "SDSL Shader Debugger",
+        "program": "./dist/debugAdapter.js",
+        "runtime": "node",
+        "configurationAttributes": {
+          "launch": {
+            "required": [],
+            "properties": {
+              "captureFile": {
+                "type": "string",
+                "description": "Path to RenderDoc .rdc capture file (auto-detected if omitted)",
+                "default": null
+              },
+              "pixelX": {
+                "type": "number",
+                "description": "X coordinate of pixel to debug",
+                "default": 640
+              },
+              "pixelY": {
+                "type": "number",
+                "description": "Y coordinate of pixel to debug",
+                "default": 360
+              },
+              "autoCapture": {
+                "type": "boolean",
+                "description": "Automatically detect and load latest capture from vvvv",
+                "default": true
+              },
+              "vvvvLogDir": {
+                "type": "string",
+                "description": "Path to vvvv log folder containing HLSL files"
+              },
+              "workspaceDirs": {
+                "type": "array",
+                "description": "Additional directories to search for SDSL files",
+                "items": {
+                  "type": "string"
+                },
+                "default": []
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "sdsl-shader",
+            "request": "launch",
+            "name": "Debug Shader (Auto-detect)",
+            "autoCapture": true
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "SDSL: Debug Shader (Auto)",
+            "description": "Auto-detect latest capture and debug shader",
+            "body": {
+              "type": "sdsl-shader",
+              "request": "launch",
+              "name": "Debug Shader",
+              "autoCapture": true
+            }
+          },
+          {
+            "label": "SDSL: Debug Shader (Manual)",
+            "description": "Debug specific capture file",
+            "body": {
+              "type": "sdsl-shader",
+              "request": "launch",
+              "name": "Debug Shader",
+              "captureFile": "^\"\\${workspaceFolder}/captures/test_capture.rdc\"",
+              "pixelX": 640,
+              "pixelY": 360
+            }
+          }
+        ]
+      }
+    ],
+    "breakpoints": [
+      {
+        "language": "sdsl"
+      }
     ]
   },
   "scripts": {
@@ -163,7 +247,9 @@
     "test": "vscode-test"
   },
   "dependencies": {
-    "vscode-languageclient": "^9.0.1"
+    "vscode-languageclient": "^9.0.1",
+    "@vscode/debugadapter": "^1.67.0",
+    "@vscode/debugprotocol": "^1.67.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",
@@ -180,6 +266,10 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/tebjan/Stride.ShaderExplorer"
+  },
+  "homepage": "https://forum.vvvv.org/t/stride-sdsl-shader-tools-for-vs-code/24975",
+  "bugs": {
+    "url": "https://github.com/tebjan/Stride.ShaderExplorer/issues"
   },
   "license": "GPL-3.0"
 }
