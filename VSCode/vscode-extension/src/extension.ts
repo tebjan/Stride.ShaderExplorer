@@ -464,6 +464,11 @@ async function startLanguageServer(context: vscode.ExtensionContext): Promise<vo
     const vvvvInstallationsFolder = config.get<string>('vvvvInstallationsFolder') || '';
     const diagnosticsDelay = config.get<number>('diagnostics.delay') || 2000;
 
+    // Track sdsl-external URIs so we can convert them to file:// for the LSP protocol.
+    // OmniSharp.Extensions.LanguageServer 0.19.9 can't parse custom URI schemes,
+    // so we transparently convert to file:// on the wire and map back in responses.
+    const externalToFileUri = new Map<string, string>();
+
     // Client options with middleware to enhance hover with clickable links
     const clientOptions: LanguageClientOptions = {
         documentSelector: [
@@ -480,6 +485,26 @@ async function startLanguageServer(context: vscode.ExtensionContext): Promise<vo
             diagnosticsDelayMs: diagnosticsDelay,
         },
         outputChannelName: 'Stride Shader Language Server',
+        uriConverters: {
+            code2Protocol: (uri: vscode.Uri): string => {
+                if (uri.scheme === EXTERNAL_SHADER_SCHEME) {
+                    // Convert to file:// URI for the server (OmniSharp can't handle custom schemes)
+                    const fileUri = uri.with({ scheme: 'file' });
+                    const fileUriStr = fileUri.toString();
+                    externalToFileUri.set(fileUriStr, uri.toString());
+                    return fileUriStr;
+                }
+                return uri.toString();
+            },
+            protocol2Code: (value: string): vscode.Uri => {
+                // Map file:// URIs back to sdsl-external:// if they were originally external
+                const originalUri = externalToFileUri.get(value);
+                if (originalUri) {
+                    return vscode.Uri.parse(originalUri);
+                }
+                return vscode.Uri.parse(value);
+            },
+        },
         middleware: {
             // Intercept hover responses to add clickable command links
             provideHover: async (document, position, token, next) => {
