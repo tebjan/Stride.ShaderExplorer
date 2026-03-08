@@ -580,7 +580,9 @@ async function startLanguageServer(context: vscode.ExtensionContext): Promise<vo
                 if (e.affectsConfiguration('strideShaderTools.shaderPaths')) {
                     const updatedConfig = vscode.workspace.getConfiguration('strideShaderTools');
                     const paths = updatedConfig.get<string[]>('shaderPaths') ?? [];
-                    client.sendNotification('stride/updateShaderPaths', { additionalShaderPaths: paths });
+                    client.sendNotification('stride/updateShaderPaths', {
+                        additionalShaderPaths: paths,
+                    });
                 }
             })
         );
