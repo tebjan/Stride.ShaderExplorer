@@ -14,7 +14,7 @@ import {
 } from './ExternalShaderProvider';
 import { UnifiedTreeProvider } from './panels';
 
-const EXTENSION_ID = 'tebjan.stride-shader-tools';
+const EXTENSION_ID = 'stride.sdsl';
 
 let client: LanguageClient | undefined;
 
@@ -573,6 +573,27 @@ async function startLanguageServer(context: vscode.ExtensionContext): Promise<vo
         if (vscode.window.activeTextEditor?.document.languageId === 'sdsl') {
             unifiedTreeProvider.refresh();
         }
+
+        // Notify language server when shader path settings change
+        context.subscriptions.push(
+            vscode.workspace.onDidChangeConfiguration((e) => {
+                if (e.affectsConfiguration('strideShaderTools.shaderPaths')) {
+                    const updatedConfig = vscode.workspace.getConfiguration('strideShaderTools');
+                    const paths = updatedConfig.get<string[]>('shaderPaths') ?? [];
+                    client.sendNotification('stride/updateShaderPaths', { additionalShaderPaths: paths });
+                }
+            })
+        );
+
+        // Notify language server when workspace folders are added or removed
+        context.subscriptions.push(
+            vscode.workspace.onDidChangeWorkspaceFolders((e) => {
+                client.sendNotification('stride/updateWorkspaceFolders', {
+                    added: e.added.map((f) => f.uri.fsPath),
+                    removed: e.removed.map((f) => f.uri.fsPath),
+                });
+            })
+        );
     } catch (error) {
         console.error('Failed to start language server:', error);
         vscode.window.showWarningMessage(

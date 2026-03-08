@@ -3,11 +3,11 @@ A tool showing the [built-in shaders](https://doc.stride3d.net/latest/en/manual/
 
 ## VS Code Extension
 
-<a href="https://marketplace.visualstudio.com/items?itemName=tebjan.sdsl">
+<a href="https://marketplace.visualstudio.com/items?itemName=stride.sdsl">
   <img src="VSCode/vscode-extension/icons/icon.png" alt="Stride Shader Tools" width="128px"/>
 </a>
 
-**[Stride Shader Tools](https://marketplace.visualstudio.com/items?itemName=tebjan.sdsl)** - VS Code extension for SDSL shader development with:
+**[Stride Shader Tools](https://marketplace.visualstudio.com/items?itemName=stride.sdsl)** - VS Code extension for SDSL shader development with:
 
 * Syntax highlighting for `.sdsl` files
 * IntelliSense with completions for shaders, variables, and methods
@@ -17,7 +17,7 @@ A tool showing the [built-in shaders](https://doc.stride3d.net/latest/en/manual/
 * Inheritance tree view panel
 * Template shader support
 
-Install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=tebjan.sdsl).
+Install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=stride.sdsl).
 
 ---
 
