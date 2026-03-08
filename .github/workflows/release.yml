@@ -74,13 +74,11 @@ jobs:
         env:
           VSCE_PAT: ${{ secrets.VS_MARKETPLACE_TOKEN }}
 
-      - name: Ensure Open VSX namespace exists
-        working-directory: VSCode/vscode-extension
-        run: npx ovsx create-namespace stride -p ${{ secrets.OPEN_VSX_TOKEN }} || true
-
       - name: Publish to Open VSX Registry
         working-directory: VSCode/vscode-extension
         run: |
+          # Open VSX still uses the tebjan namespace
+          sed -i 's/"publisher": "stride"/"publisher": "tebjan"/' package.json
           if [ "${{ steps.version.outputs.PRE_RELEASE }}" = "true" ]; then
             npx ovsx publish -p ${{ secrets.OPEN_VSX_TOKEN }} --pre-release
           else
